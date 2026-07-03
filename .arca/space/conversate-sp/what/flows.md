@@ -23,8 +23,8 @@ flowchart TD
     BR --> C
     CLI --> C
 
-    C --> LOG[(conv/log/*.md\nsource of truth)]
-    C --> IDX[(conv/index.jsonl\nderived cache)]
+    C --> LOG[(.conversate/convs/*.md\nsource of truth)]
+    C --> IDX[(.conversate/index.jsonl\nderived cache)]
 ```
 
 ## 1. Conversation status state machine
@@ -59,16 +59,16 @@ flowchart TD
     B --> C[Infer topic + tags from conversation]
     C --> D[Extract state by priority]
     D --> D1[dict: coined/agreed terms — highest value]
-    D --> D2[summary, qa open threads]
-    D --> D3[sources / insights / decisions if any]
-    D1 --> E[Assemble JSON: topic,status,tags,refs,sections]
+    D --> D2[user-instructions; resume goal/next-steps/open-questions/suggested-skills]
+    D --> D3[qa open threads; condensed-transcript; sources/insights/decisions]
+    D1 --> E[Assemble JSON: sections + resume/user_instructions/condensed_transcript]
     D2 --> E
     D3 --> E
     E --> F[pipe to: conv_cli.py upsert --stdin]
     F -->|park| F2[add --status parked]
-    F --> G[CLI: validate mandatory summary/dict/qa]
+    F --> G[CLI: validate mandatory summary/dict/qa; always render resumption sections]
     F2 --> G
-    G --> H[write conv/log/YYYY-MM-DD_slug.md]
+    G --> H[write .conversate/convs/YYYY-MM-DD_slug.md]
     H --> I[regen-refs: reconcile reverse links]
     I --> J[rebuild index.jsonl]
     J --> K{manual or auto?}
@@ -89,13 +89,13 @@ flowchart TD
     C -->|multiple| E[Present ranked ids/topics] --> F[User chooses] --> D
     C -->|none| G[Report nothing found / broaden query]
     D --> H[Reconstruct in order]
-    H --> H1[1. frontmatter: id/status/tags/refs]
-    H1 --> H2[2. summary]
-    H2 --> H3[3. dict — ubiquitous language FIRST]
-    H3 --> H4[4. qa — spine; Q open = live threads]
-    H4 --> H5[5. sources — read only as needed]
-    H5 --> H6[6. insights]
-    H6 --> H7[7. decisions — do not relitigate]
+    H --> H1[1. frontmatter + summary]
+    H1 --> H2[2. user-instructions — adopt as standing behavior]
+    H2 --> H3[3. dict — ubiquitous language]
+    H3 --> H4[4. resume — act on next-steps, keep open-questions]
+    H4 --> H5[5. qa — spine; Q open = live threads]
+    H5 --> H6[6. condensed-transcript — deep context]
+    H6 --> H7[7. decisions/insights/sources — do not relitigate decisions]
     H7 --> H8[8. linked convs via refs]
     H8 --> I[set-status id active]
     I --> J[Present short summary + open threads]
@@ -116,7 +116,7 @@ flowchart TD
     L2 -->|rg missing| L2b[pure-Python index field scorer]
     L2 -->|hits| RL
     L2b -->|hits| RL
-    L2 -->|0 hits| L3[Layer 3: semble over conv/log]
+    L2 -->|0 hits| L3[Layer 3: semble over .conversate/convs]
     L3 -->|semble or uvx semble available + hits| RL
     L3 -->|unavailable / 0 hits| L4[Layer 4: built-in body scorer]
     L4 --> RL
@@ -126,7 +126,7 @@ flowchart TD
 |-------------|--------|-----------|
 | `fff` | substring score | id + file path |
 | `rg-index` / `rg-index-fallback` | `rg` or Python | `index.jsonl` fields |
-| `semble` | `semble` / `uvx semble` | `conv/log` bodies (semantic) |
+| `semble` | `semble` / `uvx semble` | `.conversate/convs` bodies (semantic) |
 | `semble-body-fallback` | built-in | conversation bodies |
 
 ## 5. Branching — sidekick / return (`conv:sidekick`, `conv:return`)
@@ -207,14 +207,14 @@ Reverse map: `spawned-from↔spawned-to`, `continued-from↔continued-as`,
 
 ```mermaid
 flowchart TD
-    A[Each user turn] --> B[conv-turn-counter.ps1]
-    B --> C[increment TEMP/conv-session-PID.count]
-    C --> D{count > 10?}
+    A[Each user prompt] --> B[conv-turn-counter.ps1 UserPromptSubmit hook]
+    B --> C[increment TEMP/conv-session-<session_id>.count]
+    C --> D{count >= 10 and a multiple of 10?}
     D -->|no| E[do nothing]
-    D -->|yes| F[inject: CONV AUTO-SAVE: threshold reached]
+    D -->|yes| F[print on stdout: CONV AUTO-SAVE: threshold reached]
     F --> G[Agent runs save flow silently]
     G --> H[Print: Auto-saved as id - rename anytime]
-    H --> I[reset/continue counter]
+    H --> I[counter keeps counting]
 ```
 
 ## 9. Write invariants (cross-cutting, enforced by the CLI)
@@ -226,13 +226,14 @@ flowchart LR
     W[any write] --> V1[validate: topic present]
     V1 --> V2[validate: status in active/parked/closed]
     V2 --> V3[validate: summary + dict + qa present]
-    V3 --> V4[normalize: sorted unique tags + refs, ISO-UTC dates]
+    V3 --> V3b[always render resume / user-instructions / condensed-transcript]
+    V3b --> V4[normalize: sorted unique tags + refs, ISO-UTC dates]
     V4 --> V5[write file only if bytes changed]
     V5 --> V6[regen-refs]
     V6 --> V7[rebuild index.jsonl]
 ```
 
-- **Source of truth = `conv/log/*.md`.** `index.jsonl` is always rebuildable.
+- **Source of truth = `.conversate/convs/*.md`.** `index.jsonl` is always rebuildable.
 - **Idempotent writes.** Unchanged content is never rewritten (stable timestamps).
 - **`## decisions` is effectively append-only** — never mutated unless the user
   explicitly asks; branch contradictions go to `## qa` as `Q (open)`, not into decisions.

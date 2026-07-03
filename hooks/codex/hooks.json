@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .conversate/hooks/codex/conv_turn_counter.py",
+            "commandWindows": "python .conversate/hooks/codex/conv_turn_counter.py",
+            "timeout": 10,
+            "statusMessage": "conversate auto-save turn counter"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ Use this for `conv:sidekick`, `conv:return`, and `conv:continue`.
    - `sidekick`: default. Create a peer conversation with `status = "active"` and ref `{ "id": "<parent>", "rel": "spawned-from" }`.
    - Same-session organize branches are non-protecting convenience only; do not use as default.
 3. Park the parent if needed:
-   `python .claude/skills/conv/scripts/conv_cli.py set-status <parent-id> parked`
+   `python .conversate/scripts/conv_cli.py set-status <parent-id> parked`
 4. Create the sidekick conversation with `upsert --stdin`. Include parent summary/decisions as sources/context, not as mutable branch decisions.
 
 ## return
@@ -19,9 +19,9 @@ Use this for `conv:sidekick`, `conv:return`, and `conv:continue`.
 2. Generate a digest covering what was explored, conclusions, useful files/patterns, contradictions, and next steps.
 3. Update the branch body with `## digest` and put unresolved contradictions in `## qa` as `Q (open)`.
 4. Set the branch closed:
-   `python .claude/skills/conv/scripts/conv_cli.py set-status <branch-id> closed`
+   `python .conversate/scripts/conv_cli.py set-status <branch-id> closed`
 5. Ensure refs are repaired:
-   `python .claude/skills/conv/scripts/conv_cli.py regen-refs`
+   `python .conversate/scripts/conv_cli.py regen-refs`
 6. If the parent is live, inject the digest into the current context. If parked, rely on the parent's next resume to surface the closed branch through refs.
 
 ## continue
@@ -30,5 +30,6 @@ Use this when the user wants the same topic in a clean session, not a side explo
 
 1. Save and park the current conversation.
 2. Create a new conversation with ref `{ "id": "<parent>", "rel": "continued-from" }`.
-3. Start from the parent's `## dict`, `## qa`, sources, insights, and decisions, carrying a clear continued-from marker.
+3. Seed the new conversation from the parent's `## dict`, `## resume`, `## qa`, sources,
+   insights, and decisions, carrying a clear continued-from marker.
 4. Let the CLI add the reverse `continued-as` ref and rebuild the index.

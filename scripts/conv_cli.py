@@ -25,7 +25,21 @@ REL_REVERSE = {
     "informed": "informed-by",
 }
 MANDATORY_SECTIONS = ("summary", "dict", "qa")
-SECTION_ORDER = ("summary", "dict", "qa", "sources", "insights", "decisions", "digest")
+# Resumption sections: always written (as "(none)" when empty) but never hard-fail upsert.
+ALWAYS_SECTIONS = ("resume", "user-instructions", "condensed-transcript")
+SECTION_ORDER = (
+    "summary",
+    "dict",
+    "qa",
+    "resume",
+    "user-instructions",
+    "condensed-transcript",
+    "sources",
+    "insights",
+    "decisions",
+    "digest",
+)
+NONE_PLACEHOLDER = "(none)"
 
 
 class ConvError(Exception):
@@ -49,7 +63,7 @@ SENTINEL = ".conv-root"
 @dataclass
 class Resolution:
     root: Path | None
-    layer: str  # "flag" | "env" | "marker" | "none"
+    layer: str  # "flag" | "env-conversate" | "env-brain" | "marker" | "none"
     marker: Path | None = None
 
 
@@ -63,29 +77,43 @@ def _ancestor_dirs(*starts: Path):
             if d not in seen:
                 seen.add(d)
                 yield d
+            if (d / ".git").exists():
+                break  # do not resolve a store from outside the enclosing repo
 
 
 def find_marker(cwd: Path, script_dir: Path) -> tuple[Path, Path] | None:
     """Search cwd's ancestors, then the script dir's ancestors (nearest-first) for a
-    store marker. A `.conv-root` sentinel file means *that dir* is the root; a `conv/`
-    subdirectory means `<dir>/conv` is the root. Returns (root, marker_dir) or None."""
+    store marker. Precedence within each dir:
+      - the dir is itself named `.conversate`  -> that dir IS the root (cwd inside it)
+      - a `.conv-root` sentinel file           -> that dir IS the root
+      - a `.conversate/` subdirectory          -> `<dir>/.conversate` is the root
+      - (legacy) a `conv/` subdirectory        -> `<dir>/conv` is the root
+    Returns (root, marker_dir) or None."""
     for d in _ancestor_dirs(cwd, script_dir):
+        if d.name == ".conversate":
+            return d, d
         if (d / SENTINEL).is_file():
             return d, d
+        if (d / ".conversate").is_dir():
+            return d / ".conversate", d
         if (d / "conv").is_dir():
             return d / "conv", d
     return None
 
 
 def resolve_conv_root(args: argparse.Namespace | None = None) -> Resolution:
-    """Resolve the store root by layer: --conv-root flag, then $BRAIN_CONV, then a
-    marker search from the cwd and the script dir. Never guesses by path arithmetic."""
+    """Resolve the store root by layer: --conv-root flag, then $CONVERSATE_ROOT, then the
+    legacy $BRAIN_CONV, then a marker search from the cwd and the script dir. Never guesses
+    by path arithmetic."""
     explicit = getattr(args, "conv_root", None) if args else None
     if explicit:
         return Resolution(Path(explicit).expanduser().resolve(), "flag")
+    env = os.environ.get("CONVERSATE_ROOT")
+    if env:
+        return Resolution(Path(env).expanduser().resolve(), "env-conversate")
     env = os.environ.get("BRAIN_CONV")
     if env:
-        return Resolution(Path(env).expanduser().resolve(), "env")
+        return Resolution(Path(env).expanduser().resolve(), "env-brain")
     found = find_marker(Path.cwd(), Path(__file__).resolve().parent)
     if found:
         root, marker = found
@@ -96,9 +124,9 @@ def resolve_conv_root(args: argparse.Namespace | None = None) -> Resolution:
 def _root_or_raise(res: Resolution) -> Path:
     if res.root is None:
         raise ConvError(
-            "cannot resolve a conv store root: pass --conv-root PATH, set $BRAIN_CONV, "
-            "or create a .conv-root marker (or a conv/ directory) in the working "
-            "directory or an ancestor"
+            "cannot resolve a conv store root: pass --conv-root PATH, set $CONVERSATE_ROOT "
+            "(or legacy $BRAIN_CONV), or create a .conversate/ directory (or a .conv-root "
+            "marker) in the working directory or an ancestor; run `init` to create one here"
         )
     return res.root
 
@@ -117,18 +145,29 @@ def write_sentinel(root: Path) -> None:
         sentinel.write_text("# conv store root marker (resolved by scripts/conv_cli.py)\n", encoding="utf-8")
 
 
-def log_dir(root: Path) -> Path:
-    return root / "log"
+def convs_dir(root: Path) -> Path:
+    return root / "convs"
 
 
 def index_path(root: Path) -> Path:
     return root / "index.jsonl"
 
 
+def gitignore_path(root: Path) -> Path:
+    return root / ".gitignore"
+
+
 def ensure_layout(root: Path) -> None:
-    log_dir(root).mkdir(parents=True, exist_ok=True)
+    convs_dir(root).mkdir(parents=True, exist_ok=True)
     (root / ".semble").mkdir(parents=True, exist_ok=True)
     index_path(root).touch(exist_ok=True)
+
+
+def write_gitignore(root: Path) -> None:
+    """Ignore derived/cache artifacts inside the store; conversation records stay trackable."""
+    path = gitignore_path(root)
+    if not path.exists():
+        path.write_text(".semble/\nindex.jsonl\n__pycache__/\n", encoding="utf-8", newline="\n")
 
 
 def now_utc() -> str:
@@ -272,7 +311,7 @@ def read_conv(path: Path) -> Conversation:
 def read_all(root: Path, *, tolerate: bool = False) -> list[Conversation]:
     ensure_layout(root)
     convs: list[Conversation] = []
-    for path in sorted(log_dir(root).glob("*.md")):
+    for path in sorted(convs_dir(root).glob("*.md")):
         try:
             convs.append(read_conv(path))
         except Exception:
@@ -313,12 +352,101 @@ def normalize_section_value(value: Any) -> str:
     return str(value).strip()
 
 
+def _as_items(value: Any) -> list[str]:
+    """Coerce a scalar or list into a list of non-empty, stripped strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        value = [value]
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def render_resume(value: Any) -> str:
+    """Render the structured `resume` payload into markdown bullets; empty -> ""."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        raise ConvError("resume must be an object or a string")
+    goal = str(value.get("goal", "")).strip()
+    groups = (
+        ("next-steps", _as_items(value.get("next_steps"))),
+        ("open-questions", _as_items(value.get("open_questions"))),
+        ("suggested-skills", _as_items(value.get("suggested_skills"))),
+    )
+    if not goal and not any(items for _, items in groups):
+        return ""
+    lines = [f"- goal: {goal or NONE_PLACEHOLDER}"]
+    for label, items in groups:
+        lines.append(f"- {label}:")
+        for item in items or [NONE_PLACEHOLDER]:
+            lines.append(f"  - {item}")
+    return "\n".join(lines)
+
+
+def render_user_instructions(value: Any) -> str:
+    """Render standing user directives as bullets (list) or verbatim text (str)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return "\n".join(f"- {item}" for item in _as_items(value))
+
+
+def render_condensed_transcript(value: Any) -> str:
+    """Render the chronological exchange log as `- U:` / `- A:` bullets. Each entry is a
+    `{"u": ..., "a": ...}` object (canonical) or a plain string."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, list):
+        raise ConvError("condensed_transcript must be a list")
+    lines: list[str] = []
+    for entry in value:
+        if isinstance(entry, dict):
+            u = str(entry.get("u", "")).strip()
+            a = str(entry.get("a", "")).strip()
+            if u:
+                lines.append(f"- U: {u}")
+            if a:
+                lines.append(f"- A: {a}")
+        else:
+            text = str(entry).strip()
+            if text:
+                lines.append(f"- {text}")
+    return "\n".join(lines)
+
+
+def resumption_sections(raw: dict[str, Any]) -> dict[str, str]:
+    """Rendered text for the always-on resumption sections, from structured payload keys."""
+    return {
+        "resume": render_resume(raw.get("resume")),
+        "user-instructions": render_user_instructions(raw.get("user_instructions")),
+        "condensed-transcript": render_condensed_transcript(raw.get("condensed_transcript")),
+    }
+
+
 def build_body(raw: dict[str, Any]) -> str:
+    always = resumption_sections(raw)
     if raw.get("body"):
         body = str(raw["body"]).strip() + "\n"
-        missing = [name for name in MANDATORY_SECTIONS if name not in sections_from_body(body)]
+        present = sections_from_body(body)
+        missing = [name for name in MANDATORY_SECTIONS if name not in present]
         if missing:
             raise ConvError(f"body missing mandatory sections: {', '.join(missing)}")
+        # Guarantee the resumption sections exist even when a raw body omits them.
+        extra = [
+            f"## {name}\n{always.get(name) or NONE_PLACEHOLDER}\n"
+            for name in ALWAYS_SECTIONS
+            if name not in present
+        ]
+        if extra:
+            body = body.rstrip() + "\n\n" + "\n".join(extra)
+            body = body.rstrip() + "\n"
         return body
 
     sections = raw.get("sections")
@@ -332,10 +460,14 @@ def build_body(raw: dict[str, Any]) -> str:
     parts: list[str] = []
     emitted: set[str] = set()
     for name in SECTION_ORDER:
-        content = normalize_section_value(sections.get(name))
-        if content:
-            parts.append(f"## {name}\n{content.strip()}\n")
-            emitted.add(name)
+        if name in ALWAYS_SECTIONS:
+            content = always.get(name) or normalize_section_value(sections.get(name)) or NONE_PLACEHOLDER
+        else:
+            content = normalize_section_value(sections.get(name))
+            if not content:
+                continue
+        parts.append(f"## {name}\n{content.strip()}\n")
+        emitted.add(name)
     for name in sorted(sections):
         if name in emitted:
             continue
@@ -424,7 +556,7 @@ def upsert(root: Path, raw: dict[str, Any], *, status_override: str | None = Non
         raw = {**raw, "status": status_override}
     meta = normalize_meta(raw, existing=existing_meta, root=root)
     body = build_body(raw)
-    path = log_dir(root) / file_name_for_id(meta["id"])
+    path = convs_dir(root) / file_name_for_id(meta["id"])
     changed = write_conv(path, meta, body)
     ref_changes = regen_refs(root)
     records = rebuild_index(root)
@@ -595,7 +727,7 @@ def search_semble(root: Path, records: list[dict[str, Any]], query: str, limit: 
 
     try:
         proc = subprocess.run(
-            [*command, "search", "-k", str(limit), query, str(log_dir(root)), "--content", "docs"],
+            [*command, "search", "-k", str(limit), query, str(convs_dir(root)), "--content", "docs"],
             text=True,
             capture_output=True,
             check=False,
@@ -655,11 +787,22 @@ def print_table(records: list[dict[str, Any]]) -> None:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
-    root = conv_root(args)
+    res = resolve_conv_root(args)
+    # init is the sole command that may create a store: with nothing to resolve it
+    # bootstraps <cwd>/.conversate rather than failing loud.
+    root = res.root if res.root is not None else (Path.cwd() / ".conversate").resolve()
     ensure_layout(root)
     write_sentinel(root)
+    write_gitignore(root)
     records = rebuild_index(root)
-    print_json({"conv_root": str(root), "log": str(log_dir(root)), "index": str(index_path(root)), "records": len(records)})
+    print_json(
+        {
+            "conv_root": str(root),
+            "convs": str(convs_dir(root)),
+            "index": str(index_path(root)),
+            "records": len(records),
+        }
+    )
 
 
 def cmd_rebuild_index(args: argparse.Namespace) -> None:
@@ -718,20 +861,30 @@ def cmd_show(args: argparse.Namespace) -> None:
     print_json({**index_record(root, conv), "body": conv.body})
 
 
+def missing_always_sections(body: str) -> list[str]:
+    """Resumption sections absent from a record body (legacy records predate them)."""
+    present = sections_from_body(body)
+    return [name for name in ALWAYS_SECTIONS if name not in present]
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     res = resolve_conv_root(args)
     tools = {name: bool(shutil.which(name)) for name in ("rg", "fff", "semble", "uvx", "python")}
+    semantic = (
+        "semble"
+        if tools["semble"]
+        else ("uvx semble (set CONV_USE_UVX_SEMBLE=1)" if tools["uvx"] else "body fallback")
+    )
     if res.root is None:
         print_json(
             {
                 "conv_root": None,
                 "resolution": resolution_report(res),
-                "layout": {"log": False, "index": False, "semble_cache": False},
+                "layout": {"convs": False, "index": False, "semble_cache": False, "gitignore": False},
                 "tools": tools,
-                "semantic_search": "semble"
-                if tools["semble"]
-                else ("uvx semble (set CONV_USE_UVX_SEMBLE=1)" if tools["uvx"] else "body fallback"),
+                "semantic_search": semantic,
                 "parse_errors": [],
+                "warnings": [],
                 "records": 0,
             }
         )
@@ -739,25 +892,30 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     root = res.root
     ensure_layout(root)
     parse_errors = []
-    for path in sorted(log_dir(root).glob("*.md")):
+    warnings = []
+    for path in sorted(convs_dir(root).glob("*.md")):
         try:
-            read_conv(path)
+            conv = read_conv(path)
         except Exception as exc:
             parse_errors.append({"file": str(path), "error": str(exc)})
+            continue
+        missing = missing_always_sections(conv.body)
+        if missing:
+            warnings.append({"file": str(path), "missing_sections": missing})
     print_json(
         {
             "conv_root": str(root),
             "resolution": resolution_report(res),
             "layout": {
-                "log": log_dir(root).exists(),
+                "convs": convs_dir(root).exists(),
                 "index": index_path(root).exists(),
                 "semble_cache": (root / ".semble").exists(),
+                "gitignore": gitignore_path(root).exists(),
             },
             "tools": tools,
-            "semantic_search": "semble"
-            if tools["semble"]
-            else ("uvx semble (set CONV_USE_UVX_SEMBLE=1)" if tools["uvx"] else "body fallback"),
+            "semantic_search": semantic,
             "parse_errors": parse_errors,
+            "warnings": warnings,
             "records": len(read_index(root)),
         }
     )
@@ -769,16 +927,17 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--conv-root",
         default=argparse.SUPPRESS,  # absent when unset, so a value before the subcommand is not clobbered
-        help="path to the conv store root; otherwise $BRAIN_CONV, then a .conv-root / conv/ marker search",
+        help="path to the conv store root; otherwise $CONVERSATE_ROOT, $BRAIN_CONV, then a "
+        ".conversate / .conv-root marker search",
     )
 
     parser = argparse.ArgumentParser(description="conv conversation store helper", parents=[common])
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init", parents=[common], help="create conv layout and rebuild index")
+    p = sub.add_parser("init", parents=[common], help="create the .conversate layout and rebuild index")
     p.set_defaults(func=cmd_init)
 
-    p = sub.add_parser("rebuild-index", parents=[common], help="rebuild index.jsonl from conv/log/*.md")
+    p = sub.add_parser("rebuild-index", parents=[common], help="rebuild index.jsonl from convs/*.md")
     p.set_defaults(func=cmd_rebuild_index)
 
     p = sub.add_parser("regen-refs", parents=[common], help="reconcile bidirectional refs and rebuild index")

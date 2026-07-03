@@ -1,0 +1,30 @@
+# moorage plugin manifest — user-level install via the moorage CLI.
+# The per-project installer (scripts/install.py) is independent of this file and
+# keeps using hooks/claude/settings-snippet.json + hooks/codex/hooks.json, whose
+# commands are project-relative (.conversate/...). The snippet/config files named
+# here are the moorage-facing variants with payload-relative command tokens that
+# moorage rewrites to absolute ~/.moorage/skills/conversate/... paths.
+
+name = "conversate"
+
+[install]
+mode = "dev"
+
+[[skills]]
+path = "."
+
+[[hooks.claude]]
+snippet = "hooks/claude/moorage-snippet.json"
+
+[[hooks.pi]]
+script = "hooks/pi/conv-turn-counter.ts"
+
+[[hooks.omp]]
+script = "hooks/pi/conv-turn-counter.ts"
+stage = "pre"
+
+[[hooks.codex]]
+config = "hooks/codex/moorage-hooks.json"
+
+# No [post_install]: conversate's store is per-project by design — a user-level
+# init would wrongly create a store inside the moorage home.

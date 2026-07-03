@@ -16,7 +16,7 @@ SCRIPT = REPO_ROOT / "scripts" / "conv_cli.py"
 
 # Env vars that influence store-root resolution; stripped so a "clean" run only
 # resolves via flag/marker, never an ambient store.
-_RESOLUTION_ENV = ("BRAIN_CONV", "CONV_USE_UVX_SEMBLE")
+_RESOLUTION_ENV = ("CONVERSATE_ROOT", "BRAIN_CONV", "CONV_USE_UVX_SEMBLE")
 
 
 def clean_env(**overrides: object) -> dict[str, str]:
@@ -28,7 +28,7 @@ def clean_env(**overrides: object) -> dict[str, str]:
     return env
 
 
-def run_cli(args, cwd, env=None) -> subprocess.CompletedProcess:
+def run_cli(args, cwd, env=None, input=None) -> subprocess.CompletedProcess:
     if env is None:
         env = clean_env()
     return subprocess.run(
@@ -37,6 +37,7 @@ def run_cli(args, cwd, env=None) -> subprocess.CompletedProcess:
         env=env,
         capture_output=True,
         text=True,
+        input=input,
     )
 
 
