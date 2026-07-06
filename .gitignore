@@ -5,3 +5,9 @@ __pycache__/
 
 # conversate semantic-search cache
 .semble/
+
+# conversate runtime profiler output
+tools/profiler/results/
+tools/profiler/*.prof
+tools/profiler/**/*.prof
+/.arca/
