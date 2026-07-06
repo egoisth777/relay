@@ -2,7 +2,7 @@
 
 Contract: every record is a resumption point. Beyond the mandatory summary/dict/qa, the
 body ALWAYS carries `## resume`, `## user-instructions`, and `## condensed-transcript`,
-rendered from structured upsert payload keys and placed in a fixed order. Empty fields
+rendered from structured upsert input keys and placed in a fixed order. Empty fields
 render as `(none)` rather than hard-failing upsert. Legacy records that predate these
 sections are tolerated by rebuild-index/show (no crash).
 """
@@ -25,7 +25,10 @@ FULL_PAYLOAD = {
         "summary": "one line summary",
         "dict": "- **term** - meaning",
         "qa": "- **Q:** q? **A:** a.",
+        "sources": "- source note",
+        "insights": "- useful signal",
         "decisions": "1. a settled decision",
+        "digest": "final digest",
     },
     "resume": {
         "goal": "finish the redesign",
@@ -93,12 +96,121 @@ class RecordSchemaTest(unittest.TestCase):
             "## summary",
             "## dict",
             "## qa",
+            "## sources",
+            "## insights",
+            "## decisions",
+            "## digest",
             "## resume",
             "## user-instructions",
             "## condensed-transcript",
-            "## decisions",
         )
         self.assertEqual(positions, sorted(positions), f"sections out of order:\n{md}")
+
+    def test_structured_unknown_sections_render_last_alphabetically(self) -> None:
+        payload = {
+            "topic": "unknown section order",
+            "sections": {
+                "summary": "s",
+                "dict": "- **t** - m",
+                "qa": "- **Q:** q? **A:** a.",
+                "zebra": "z",
+                "alpha": "a",
+            },
+        }
+        md = self._markdown(self._upsert(payload))
+        positions = _order(
+            md,
+            "## summary",
+            "## dict",
+            "## qa",
+            "## resume",
+            "## user-instructions",
+            "## condensed-transcript",
+            "## alpha",
+            "## zebra",
+        )
+        self.assertEqual(positions, sorted(positions), f"sections out of order:\n{md}")
+
+    def test_raw_body_is_rewritten_to_canonical_section_order(self) -> None:
+        cid = self._upsert(
+            {
+                "topic": "raw body order",
+                "body": """## zebra
+z
+
+## qa
+- **Q:** q? **A:** a.
+
+## summary
+s
+
+## alpha
+a
+
+## decisions
+d
+
+## dict
+- **t** - m
+""",
+            }
+        )
+        md = self._markdown(cid)
+        positions = _order(
+            md,
+            "## summary",
+            "## dict",
+            "## qa",
+            "## decisions",
+            "## resume",
+            "## user-instructions",
+            "## condensed-transcript",
+            "## alpha",
+            "## zebra",
+        )
+        self.assertEqual(positions, sorted(positions), f"sections out of order:\n{md}")
+
+    def test_raw_body_rejects_duplicate_sections_without_replacing_existing_record(self) -> None:
+        cid = self._upsert(
+            {
+                "id": "conv_260101_duplicate-raw",
+                "topic": "duplicate raw",
+                "sections": {
+                    "summary": "original summary",
+                    "dict": "- **t** - m",
+                    "qa": "- **Q:** q? **A:** a.",
+                },
+            }
+        )
+        before = self._markdown(cid)
+
+        proc = run_cli(
+            ["upsert", "--stdin", "--conv-root", self.root],
+            cwd=self.tmp,
+            input=json.dumps(
+                {
+                    "id": cid,
+                    "topic": "duplicate raw",
+                    "body": """## summary
+new summary
+
+## dict
+- **t** - m
+
+## summary
+second summary must not replace data
+
+## qa
+- **Q:** q? **A:** a.
+""",
+                }
+            ),
+        )
+
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("duplicate section", proc.stderr)
+        self.assertIn("summary", proc.stderr)
+        self.assertEqual(self._markdown(cid), before)
 
     def test_resume_structure_is_rendered(self) -> None:
         md = self._markdown(self._upsert(FULL_PAYLOAD))

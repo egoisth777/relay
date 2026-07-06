@@ -1,26 +1,12 @@
-"""Slice s-store-root-resolution / ticket t-marker-resolution.
+"""CLI global root defaults.
 
-Contract under test (conv_root resolution order):
-  1. --conv-root flag
-  2. $CONVERSATE_ROOT env
-  3. $BRAIN_CONV env (legacy)
-  4. marker search from cwd, then the script dir, nearest ancestor first:
-       - a dir *named* `.conversate`                  -> that dir IS the root
-       - a dir holding a `.conv-root` sentinel file    -> that dir IS the root
-       - a dir holding a `.conversate/` subdirectory   -> `<dir>/.conversate`
-       - (legacy) a dir holding a `conv/` subdirectory -> `<dir>/conv`
-     The walk stops at a `.git` boundary but still checks the repo-root dir itself.
-  5. else: read commands exit 2 with a clear ConvError (never path arithmetic);
-     `init` is the sole exception -- it bootstraps `<cwd>/.conversate`.
-
-`init` writes a `.conv-root` sentinel inside the resolved root.
-
-Assumption: the test working dirs live under the system temp tree and the repo
-checkout has no `.conversate`/`conv/`/`.conv-root` marker above `scripts/`, so a "clean"
-run with no marker genuinely resolves to nothing.
+Contract: normal CLI commands use the Plugin installation root at `~/.conversate/`
+and the Conversation database at `~/.conversate/convs/`. Legacy cwd markers and
+environment roots are not default resolution inputs.
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -30,188 +16,216 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _util import clean_env, load_json, run_cli  # noqa: E402
 
 
-class MarkerResolutionTest(unittest.TestCase):
+def payload(topic: str, *, cid: str | None = None, refs: list[dict[str, str]] | None = None) -> str:
+    raw = {
+        "topic": topic,
+        "sections": {
+            "summary": f"{topic} summary",
+            "dict": "- **term** - meaning",
+            "qa": "- **Q:** q? **A:** a.",
+        },
+    }
+    if cid:
+        raw["id"] = cid
+    if refs is not None:
+        raw["refs"] = refs
+    return json.dumps(raw)
+
+
+def plant_legacy_marker_shape(work: Path) -> None:
+    (work / ".conversate").mkdir(exist_ok=True)
+    (work / ".conv-root").write_text("", encoding="utf-8")
+    (work / "conv").mkdir(exist_ok=True)
+
+
+class GlobalRootDefaultsTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name).resolve()
+        self.home = self.tmp / "home"
+        self.env = clean_env(home=self.home)
+        self.root = self.home / ".conversate"
+        self.db = self.root / "convs"
         self.addCleanup(self._tmp.cleanup)
 
-    # --- fail-loud, no guessing (read commands) ------------------------------
-
-    def test_no_marker_no_override_errors(self) -> None:
-        # read commands still fail loud when nothing resolves; `init` is the exception.
-        proc = run_cli(["list"], cwd=self.tmp)
-        self.assertEqual(proc.returncode, 2, proc.stderr)
-        self.assertNotIn("Traceback", proc.stderr)
-        self.assertTrue(
-            any(name in proc.stderr for name in ("BRAIN_CONV", "CONVERSATE_ROOT", "conv-root")),
-            f"error should name the override options, got: {proc.stderr!r}",
-        )
-
-    def test_no_marker_does_not_create_arithmetic_store(self) -> None:
-        # parents[4] of scripts/conv_cli.py — the old wrong default must NOT appear.
-        script = Path(__file__).resolve().parent.parent / "scripts" / "conv_cli.py"
-        bad_default = script.parents[4] / "conv"
-        existed_before = bad_default.exists()
-        run_cli(["list"], cwd=self.tmp)
-        if not existed_before:
-            self.assertFalse(
-                bad_default.exists(),
-                f"resolution must not fabricate a store at {bad_default}",
-            )
-
-    def test_init_with_no_marker_bootstraps_dot_conversate(self) -> None:
-        # init is the sole command that creates a store from nothing: <cwd>/.conversate.
-        proc = run_cli(["init"], cwd=self.tmp)
+    def test_read_command_defaults_to_global_conversation_database(self) -> None:
+        proc = run_cli(["list", "--json"], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), self.tmp / ".conversate")
-        self.assertTrue((self.tmp / ".conversate" / "convs").is_dir())
+        self.assertEqual(load_json(proc), [])
+        self.assertTrue(self.db.is_dir())
+        self.assertFalse((self.tmp / ".conversate").exists())
 
-    # --- explicit overrides --------------------------------------------------
+    def test_init_uses_global_root_even_when_cwd_marker_shape_exists(self) -> None:
+        cwd_root = self.tmp / ".conversate"
+        plant_legacy_marker_shape(self.tmp)
 
-    def test_explicit_conv_root_bootstraps_and_writes_sentinel(self) -> None:
-        root = self.tmp / ".conversate"
-        proc = run_cli(["init", "--conv-root", root], cwd=self.tmp)
+        proc = run_cli(["init"], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), root)
-        self.assertTrue((root / "convs").is_dir())
-        self.assertTrue(
-            (root / ".conv-root").is_file(),
-            "init must write a .conv-root sentinel inside the resolved root",
-        )
+        out = load_json(proc)
 
-    def test_flag_beats_env(self) -> None:
-        flag_root = self.tmp / "flagroot"
-        env_root = self.tmp / "envroot"
+        self.assertEqual(Path(out["plugin_installation_root"]), self.root)
+        self.assertEqual(Path(out["conversation_database"]), self.db)
+        self.assertFalse((cwd_root / "index.jsonl").exists(), "cwd marker shape must not be used")
+
+    def test_legacy_env_roots_are_reported_but_ignored_by_default(self) -> None:
+        env_root = self.tmp / "env-root"
         proc = run_cli(
-            ["init", "--conv-root", flag_root],
+            ["doctor"],
             cwd=self.tmp,
-            env=clean_env(CONVERSATE_ROOT=env_root),
+            env=clean_env(home=self.home, CONVERSATE_ROOT=env_root, BRAIN_CONV=self.tmp / "brain-root"),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), flag_root)
+        out = load_json(proc)
 
-    def test_conversate_root_beats_brain_conv(self) -> None:
-        cr = self.tmp / "cr"
-        bc = self.tmp / "bc"
-        proc = run_cli(["doctor"], cwd=self.tmp, env=clean_env(CONVERSATE_ROOT=cr, BRAIN_CONV=bc))
+        self.assertEqual(Path(out["plugin_installation_root"]), self.root)
+        self.assertEqual(Path(out["conversation_database"]), self.db)
+        self.assertEqual(out["resolution"]["layer"], "default-global")
+        self.assertFalse(out["resolution"]["compatibility"])
+        self.assertEqual(out["resolution"]["ignored_legacy_env"], ["CONVERSATE_ROOT", "BRAIN_CONV"])
+        self.assertFalse(env_root.exists())
+
+    def test_write_command_ignores_legacy_env_roots_by_default(self) -> None:
+        env_root = self.tmp / "env-root"
+        brain_root = self.tmp / "brain-root"
+        proc = run_cli(
+            ["upsert", "--stdin"],
+            cwd=self.tmp,
+            env=clean_env(home=self.home, CONVERSATE_ROOT=env_root, BRAIN_CONV=brain_root),
+            input=payload("env ignored", cid="conv_260104_env-ignored"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        rel = load_json(proc)["file"]
+
+        self.assertTrue((self.root / rel).is_file())
+        self.assertFalse(env_root.exists(), "CONVERSATE_ROOT must not become the default Plugin installation root")
+        self.assertFalse(brain_root.exists(), "BRAIN_CONV must not become the default Plugin installation root")
+
+    def test_explicit_conv_root_remains_compatibility_override(self) -> None:
+        compat_root = self.tmp / "compat-root"
+        proc = run_cli(["doctor", "--conv-root", compat_root], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
-        self.assertEqual(Path(out["conv_root"]), cr)
-        self.assertEqual(out["resolution"]["layer"], "env-conversate")
 
-    def test_conversate_root_beats_marker(self) -> None:
-        (self.tmp / ".conversate").mkdir()  # a marker that would otherwise resolve here
-        cr = self.tmp / "elsewhere"
-        proc = run_cli(["doctor"], cwd=self.tmp, env=clean_env(CONVERSATE_ROOT=cr))
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), cr)
+        self.assertEqual(Path(out["plugin_installation_root"]), compat_root)
+        self.assertEqual(Path(out["conversation_database"]), compat_root / "convs")
+        self.assertEqual(out["resolution"]["layer"], "compat-flag")
+        self.assertTrue(out["resolution"]["compatibility"])
 
-    def test_brain_conv_still_works_and_beats_marker(self) -> None:
-        (self.tmp / "conv").mkdir()  # legacy marker that would otherwise resolve here
-        env_root = self.tmp / "envroot"
-        proc = run_cli(["init"], cwd=self.tmp, env=clean_env(BRAIN_CONV=env_root))
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), env_root)
+    def test_default_supported_commands_round_trip_through_global_database(self) -> None:
+        self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
+        first = run_cli(
+            ["upsert", "--stdin"],
+            cwd=self.tmp,
+            env=self.env,
+            input=payload("alpha default", cid="conv_260101_alpha"),
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = run_cli(
+            ["upsert", "--stdin"],
+            cwd=self.tmp,
+            env=self.env,
+            input=payload(
+                "beta default",
+                cid="conv_260102_beta",
+                refs=[{"id": "conv_260101_alpha", "rel": "spawned-from"}],
+            ),
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
 
-    # --- marker search: .conversate ------------------------------------------
+        listed = run_cli(["list", "--json"], cwd=self.tmp, env=self.env)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual({record["id"] for record in load_json(listed)}, {"conv_260101_alpha", "conv_260102_beta"})
 
-    def test_conversate_dirname_marker_from_inside(self) -> None:
-        store = self.tmp / ".conversate"
-        store.mkdir()
-        proc = run_cli(["doctor"], cwd=store)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        out = load_json(proc)
-        self.assertEqual(Path(out["conv_root"]), store)
-        self.assertEqual(out["resolution"]["layer"], "marker")
+        hit = run_cli(["search", "alpha"], cwd=self.tmp, env=self.env)
+        self.assertEqual(hit.returncode, 0, hit.stderr)
+        self.assertEqual(load_json(hit)[0]["id"], "conv_260101_alpha")
 
-    def test_conversate_subdir_from_project_root(self) -> None:
-        (self.tmp / ".conversate").mkdir()
-        proc = run_cli(["doctor"], cwd=self.tmp)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), self.tmp / ".conversate")
+        shown = run_cli(["show", "conv_260101_alpha"], cwd=self.tmp, env=self.env)
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertEqual(load_json(shown)["id"], "conv_260101_alpha")
 
-    def test_conversate_marker_from_nested_subdir(self) -> None:
-        (self.tmp / ".conversate").mkdir()
-        work = self.tmp / "src" / "pkg" / "deep"
-        work.mkdir(parents=True)
-        proc = run_cli(["doctor"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), self.tmp / ".conversate")
+        status = run_cli(["set-status", "conv_260101_alpha", "parked"], cwd=self.tmp, env=self.env)
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(load_json(status)["status"], "parked")
 
-    def test_conversate_wins_over_legacy_conv_in_same_dir(self) -> None:
-        (self.tmp / ".conversate").mkdir()
-        (self.tmp / "conv").mkdir()
-        proc = run_cli(["doctor"], cwd=self.tmp)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), self.tmp / ".conversate")
+        refs = run_cli(["regen-refs"], cwd=self.tmp, env=self.env)
+        self.assertEqual(refs.returncode, 0, refs.stderr)
+        self.assertEqual(load_json(refs)["records"], 2)
+        alpha = run_cli(["show", "conv_260101_alpha"], cwd=self.tmp, env=self.env)
+        alpha_refs = load_json(alpha)["refs"]
+        self.assertIn({"id": "conv_260102_beta", "rel": "spawned-to"}, alpha_refs)
 
-    # --- marker search: legacy shapes still resolve --------------------------
+        (self.root / "index.jsonl").unlink()
+        rebuilt = run_cli(["rebuild-index"], cwd=self.tmp, env=self.env)
+        self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+        self.assertEqual(load_json(rebuilt)["records"], 2)
 
-    def test_legacy_conv_subdir_from_descendant_cwd(self) -> None:
-        (self.tmp / "conv").mkdir()
-        work = self.tmp / "a" / "b" / "work"
-        work.mkdir(parents=True)
-        proc = run_cli(["init"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), self.tmp / "conv")
+    def test_read_commands_ignore_cwd_compatibility_root_without_flag(self) -> None:
+        local_root = self.tmp / ".conversate"
+        self.assertEqual(run_cli(["init", "--conv-root", local_root], cwd=self.tmp, env=self.env).returncode, 0)
+        local_upsert = run_cli(
+            ["upsert", "--stdin", "--conv-root", local_root],
+            cwd=self.tmp,
+            env=self.env,
+            input=payload("local only", cid="conv_260105_local-only"),
+        )
+        self.assertEqual(local_upsert.returncode, 0, local_upsert.stderr)
+        plant_legacy_marker_shape(self.tmp)
 
-    def test_marker_via_sentinel_resolves_to_that_dir(self) -> None:
-        store = self.tmp / "store"
-        store.mkdir()
-        (store / ".conv-root").write_text("", encoding="utf-8")
-        work = store / "nested" / "work"
-        work.mkdir(parents=True)
-        proc = run_cli(["init"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        # a dir holding `.conv-root` IS the root (not <dir>/.conversate)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), store)
+        listed = run_cli(["list", "--json"], cwd=self.tmp, env=self.env)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual(load_json(listed), [])
 
-    def test_nearest_marker_wins(self) -> None:
-        (self.tmp / ".conversate").mkdir()
-        inner = self.tmp / "inner"
-        inner_store = inner / ".conversate"
-        inner_store.mkdir(parents=True)
-        work = inner / "work"
-        work.mkdir()
-        proc = run_cli(["doctor"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        # nearest ancestor (inner) wins over the farther one (tmp)
-        self.assertEqual(Path(load_json(proc)["conv_root"]), inner_store)
+        hits = run_cli(["search", "local only"], cwd=self.tmp, env=self.env)
+        self.assertEqual(hits.returncode, 0, hits.stderr)
+        self.assertEqual(load_json(hits), [])
 
-    def test_bootstrapped_store_is_rediscoverable(self) -> None:
-        root = self.tmp / ".conversate"
-        self.assertEqual(run_cli(["init", "--conv-root", root], cwd=self.tmp).returncode, 0)
-        work = self.tmp / "later" / "work"
-        work.mkdir(parents=True)
-        # a later bare command from elsewhere must find the bootstrapped store
-        proc = run_cli(["list"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        shown = run_cli(["show", "conv_260105_local-only"], cwd=self.tmp, env=self.env)
+        self.assertEqual(shown.returncode, 2)
+        self.assertIn("conv:", shown.stderr)
+        self.assertNotIn("Traceback", shown.stderr)
 
-    # --- .git boundary -------------------------------------------------------
+    def test_rebuild_index_uses_only_global_conversation_database(self) -> None:
+        self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
+        global_upsert = run_cli(
+            ["upsert", "--stdin"],
+            cwd=self.tmp,
+            env=self.env,
+            input=payload("global only", cid="conv_260103_global"),
+        )
+        self.assertEqual(global_upsert.returncode, 0, global_upsert.stderr)
 
-    def test_git_boundary_includes_repo_root(self) -> None:
-        repo = self.tmp / "repo"
-        (repo / ".git").mkdir(parents=True)
-        (repo / ".conversate").mkdir()  # sits next to .git at the repo root
-        work = repo / "src" / "pkg"
-        work.mkdir(parents=True)
-        proc = run_cli(["doctor"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        out = load_json(proc)
-        self.assertEqual(Path(out["conv_root"]), repo / ".conversate")
-        self.assertEqual(out["resolution"]["layer"], "marker")
+        local_db = self.tmp / ".conversate" / "convs"
+        local_db.mkdir(parents=True)
+        plant_legacy_marker_shape(self.tmp)
+        (local_db / "2026-01-03_local.md").write_text(
+            """+++
+id = "conv_260103_local"
+topic = "local must be ignored"
+status = "active"
+tags = []
+refs = []
+created = "2026-01-03T00:00:00Z"
+updated = "2026-01-03T00:00:00Z"
++++
+## summary
+local
 
-    def test_marker_above_git_boundary_is_not_used(self) -> None:
-        (self.tmp / ".conversate").mkdir()  # above the repo boundary
-        repo = self.tmp / "repo"
-        (repo / ".git").mkdir(parents=True)
-        work = repo / "work"
-        work.mkdir(parents=True)
-        proc = run_cli(["doctor"], cwd=work)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        # the ancestor .conversate is beyond the .git boundary, so it is not resolved
-        self.assertEqual(load_json(proc)["resolution"]["layer"], "none")
+## dict
+- **x** - y
+
+## qa
+- **Q:** q? **A:** a.
+""",
+            encoding="utf-8",
+        )
+
+        (self.root / "index.jsonl").unlink()
+        rebuilt = run_cli(["rebuild-index"], cwd=self.tmp, env=self.env)
+        self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+        self.assertEqual(load_json(rebuilt)["records"], 1)
+        records = [json.loads(line) for line in (self.root / "index.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([record["id"] for record in records], ["conv_260103_global"])
 
 
 if __name__ == "__main__":

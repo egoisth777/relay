@@ -4,8 +4,8 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
 
 ## Steps
 
-1. Ensure the store exists:
-   `python .conversate/scripts/conv_cli.py init`
+1. Ensure the Plugin installation root and Conversation database exist:
+   `python ~/.conversate/scripts/conv_cli.py init`
 2. Infer a concise topic and tags from the current conversation.
 3. Extract state in this priority order (highest value first):
    - `dict`: terms coined or agreed on, with meanings. This is the highest-value section
@@ -19,8 +19,8 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
      survives — bullets of user/agent turns, not a raw replay.
    - `sources` / `insights` / `decisions`: files and contexts used, realizations worth
      keeping, and only settled decisions with reasoning.
-4. Write the JSON payload (shape below) and pipe it to:
-   `python .conversate/scripts/conv_cli.py upsert --stdin`
+4. Write the conversation JSON (shape below) and pipe it to:
+   `python ~/.conversate/scripts/conv_cli.py upsert --stdin`
    Use `--status parked` for `conv:park`.
 5. The CLI writes the TOML markdown, always renders the resumption sections (empty ones
    become `(none)`), reconciles reverse refs, and rebuilds `index.jsonl`.
@@ -36,7 +36,7 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
 - Write for a *cold* agent recovering headspace, not for replaying a transcript. Exclude
   acknowledgments, tool noise, and chatter.
 
-## Upsert payload shape
+## Upsert JSON Shape
 
 ```json
 {
@@ -61,12 +61,12 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
   "user_instructions": ["use PowerShell on Windows", "never git commit without asking"],
   "condensed_transcript": [
     {"u": "redesign conversate", "a": "read the engine, planned the changes"},
-    {"u": "make it agent-agnostic", "a": "moved store to .conversate/ (see scripts/conv_cli.py)"}
+    {"u": "make it agent-agnostic", "a": "moved records to ~/.conversate/convs/ (see scripts/conv_cli.py)"}
   ]
 }
 ```
 
 `summary`, `dict`, and `qa` are mandatory (upsert fails without them). `resume`,
-`user_instructions`, and `condensed_transcript` are structured payload keys that always
+`user_instructions`, and `condensed_transcript` are structured JSON keys that always
 render as sections — omit them and they render `(none)`, so never fabricate content to
 fill them. Optional `sources`/`insights`/`decisions` are omitted from the file when empty.

@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .conversate/hooks/codex/conv_turn_counter.py",
-            "commandWindows": "python .conversate/hooks/codex/conv_turn_counter.py",
+            "command": "__CONVERSATE_VERIFIED_INTERPRETER__ hooks/codex/conv_turn_counter.py",
+            "commandWindows": "__CONVERSATE_VERIFIED_INTERPRETER_WINDOWS__ hooks/codex/conv_turn_counter.py",
             "timeout": 10,
             "statusMessage": "conversate auto-save turn counter"
           }

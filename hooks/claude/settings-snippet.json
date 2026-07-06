@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -File .conversate/hooks/claude/conv-turn-counter.ps1"
+            "command": "pwsh -NoProfile -File \"hooks/claude/conv-turn-counter.ps1\""
           }
         ]
       }

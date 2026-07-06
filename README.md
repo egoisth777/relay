@@ -8,68 +8,102 @@ A record captures the *mental model*: the agreed language, the resumption plan, 
 standing user instructions, and a condensed exchange log — written so a cold agent (any
 agent) can pick the thread back up without replaying the chat.
 
-## The `.conversate/` store
+## Runtime Path Contract
 
-The store is a self-contained directory installed per project. The conv root **is** the
-`.conversate/` directory:
+Plugin source is this repo. The universal installation root (the installer `--target`,
+also reported as the Plugin installation root) defaults to `~/.conversate/`. The
+canonical installed plugin root is `~/.conversate/conv/`; the canonical hook root is
+`~/.conversate/hooks/`. The Conversation database is `~/.conversate/convs/` and is the
+source of truth for saved conversation records:
 
 ```
-.conversate/
-├── .conv-root      # sentinel marking the store root
-├── .gitignore      # ignores derived artifacts; records stay tracked
-├── convs/          # *.md conversation records — source of truth
+~/.conversate/
+├── .gitignore      # ignores derived artifacts; records stay trackable
+├── conv/           # canonical installed conv plugin root
+│   ├── SKILL.md
+│   ├── .claude-plugin/
+│   ├── .codex-plugin/
+│   └── skills/
+├── convs/          # Conversation database: *.md records, source of truth
 │   └── YYYY-MM-DD_<slug>.md
 ├── index.jsonl     # derived cache (rebuildable), one record per line
 ├── .semble/        # semantic-search cache
+├── references/     # installed reference playbooks
+├── hooks/          # canonical hook implementations
 └── scripts/
-    └── conv_cli.py # the engine
+    └── conv_cli.py # installed CLI
 ```
 
 Records (`convs/`) are trackable in git; the index and caches are ignored.
 
 ## Supported agents
 
-conversate is packaged as a skill (`SKILL.md`, skill name `conversate`) read by four
-harnesses — Claude Code, pi, oh-my-pi (omp), and Codex. Each reaches the shared store
-through a symlinked `conversate` skill directory (the name matches SKILL.md `name:`), so
-the CLI is invoked at the same path in every harness:
-`python .conversate/scripts/conv_cli.py`. See **Installation** for the exact links.
+conversate is packaged as a plugin named `conv` with a group of skills backed by one
+shared Conversation database. The plugin skill group is installed once at
+`~/.conversate/conv/`. Each real agent config surface, such as `~/.codex/` or
+`~/.claude/`, holds scan entrypoints or hook config that point back to
+`~/.conversate/conv/` and `~/.conversate/hooks/`. Every skill delegates writes to the
+installed CLI:
+`python ~/.conversate/scripts/conv_cli.py`.
 
 ## Installation
 
-conversate installs into a project as a self-contained `.conversate/` directory and
-links itself into each agent's skill-discovery path. From a conversate checkout:
+conversate installs runtime files under the universal installation root, installs the
+`conv` plugin skill group at the canonical installed plugin root, and installs hook
+implementations at the canonical hook root. From Plugin source:
 
-    python scripts/install.py --target /path/to/your/project
+    python scripts/install.py
 
-This copies the skill payload into `<project>/.conversate/`, initializes the
-conversation store, and creates two symlinks that cover all four supported agents:
+This copies plugin files into `~/.conversate/`, initializes the Conversation database at
+`~/.conversate/convs/`, and wires real agent config/link surfaces back to the canonical
+roots:
 
-| Link | Consumed by |
-|------|-------------|
-| `<project>/.claude/skills/conversate` -> `.conversate` | Claude Code (oh-my-pi also reads this) |
-| `<project>/.agents/skills/conversate` -> `.conversate` | pi, oh-my-pi, Codex |
+| Runtime surface | Role |
+|-----------------|------|
+| `~/.conversate/conv/` | Canonical installed plugin root |
+| `~/.conversate/hooks/` | Canonical hook root |
+| `~/.codex/skills/conv` | Codex scan entrypoint resolving to the canonical plugin |
+| `~/.claude/skills/conv` | Claude Code scan entrypoint resolving to the canonical plugin |
+| `~/.codex/hooks.json` | Codex hook config pointing to the canonical hook root |
+| `~/.claude/settings.json` | Claude hook config pointing to the canonical hook root |
+| `~/.pi/agent/extensions/conv-turn-counter.ts` | pi extension hook pointing to the canonical hook implementation |
 
-On Windows the installer prefers a real symlink (needs Developer Mode or an elevated
-shell), falls back to an NTFS junction (no privileges), then to a copy of the skill
-payload with a loud warning.
+The installed plugin contains the base `conversate` skill plus the verbs `save`,
+`resume`, `list`, `park`, `sidekick`, `return`, `continue`, and `regen`. Agent-visible
+plugin skills route back to the installed reference playbooks and CLI under the Plugin
+installation root.
 
 ### Options
 
     python scripts/install.py [--target DIR] [--source DIR]
           [--agents claude,pi,omp,codex|all] [--hooks claude,pi,omp,codex|all|none]
-          [--update] [--force] [--uninstall] [--status] [--dry-run]
+          [--update] [--repair|--doctor-fix] [--force] [--uninstall] [--status] [--dry-run]
 
-- `--agents` (default `all`) - which agents to link; deduped to the two links above.
+- `--target` - explicit Plugin installation root; default is `~/.conversate/`.
+- `--agents` (default `all`) - which real agent scan surfaces receive entrypoints to the canonical `conv` plugin.
 - `--hooks` (default `none`) - install per-agent auto-save turn-counter hooks (see `hooks/README.md`); without it the installer prints wiring instructions.
-- `--update` - refresh the skill payload in place; never touches `convs/`, `index.jsonl`, `.semble/`, or `.conv-root`.
-- `--force` - overwrite differing payload files and replace foreign links (backs up first).
+- `--update` - refresh canonical plugin and hook files in place and remove stale installer-owned artifacts; never touches `convs/`, `index.jsonl`, or `.semble/`.
+- `--repair` / `--doctor-fix` - explicit lifecycle repair path. It refreshes installer-owned plugin files, prunes stale/cache artifacts, initializes missing lifecycle files, and rewires selected hooks. With no `--hooks`, it rewrites already-wired hooks; pass `--hooks codex` or `--hooks all` to restore missing hook wiring.
+- `--force` - overwrite differing plugin files and replace foreign plugin dirs (backs up first).
 - `--status` - report install state for the target.
-- `--uninstall` - remove the skill links and installer-wired hooks. Conversation data under `.conversate/convs/` is never touched.
+- `--uninstall` - remove installer-owned plugin entrypoints, legacy installer-created skill links, and installer-wired hooks. The Conversation database under `~/.conversate/convs/` is never touched.
 - `--dry-run` - print planned actions, change nothing.
 
 Re-running is idempotent. The installer refuses to install into the conversate
 checkout itself unless you pass an explicit `--target`.
+
+## Plugin skills
+
+The installer registers the same `conv` plugin skill group for Claude Code, pi,
+oh-my-pi, and Codex. Codex metadata points at the same `./skills/` directory and
+names the same visible verb inventory. The verb skills are thin wrappers that delegate to the shared
+Conversation database and the installed `~/.conversate/references/*.md` playbooks:
+`conv:save`, `conv:resume`, `conv:list`, `conv:park`, `conv:sidekick`,
+`conv:return`, `conv:continue`, and `conv:regen`.
+
+Claude Code must be launched from the project root for a project-scope plugin copy, and
+after install you must run `/reload-plugins` (or restart Claude Code) before the `conv`
+skills appear. Project `@skills-dir` plugins do not walk up from subdirectories.
 
 ## Record format
 
@@ -90,26 +124,26 @@ ones render `(none)`). Optional sections are omitted when empty.
 ## CLI quickstart
 
 ```bash
-# initialize the store (installation already does this; init is idempotent)
-python .conversate/scripts/conv_cli.py init
+# initialize the Plugin installation root and Conversation database
+python ~/.conversate/scripts/conv_cli.py init
 
-# save a conversation (pipe the JSON payload; see references/save.md for the shape)
-python .conversate/scripts/conv_cli.py upsert --stdin < payload.json
+# save a conversation (pipe conversation JSON; see references/save.md for the shape)
+python ~/.conversate/scripts/conv_cli.py upsert --stdin < conversation.json
 
 # find and resume
-python .conversate/scripts/conv_cli.py search "auth redesign"
-python .conversate/scripts/conv_cli.py show <id> --markdown
-python .conversate/scripts/conv_cli.py set-status <id> active
+python ~/.conversate/scripts/conv_cli.py search "auth redesign"
+python ~/.conversate/scripts/conv_cli.py show <id> --markdown
+python ~/.conversate/scripts/conv_cli.py set-status <id> active
 
 # list, repair, diagnose
-python .conversate/scripts/conv_cli.py list --limit 10
-python .conversate/scripts/conv_cli.py regen-refs
-python .conversate/scripts/conv_cli.py doctor
+python ~/.conversate/scripts/conv_cli.py list --limit 10
+python ~/.conversate/scripts/conv_cli.py regen-refs
+python ~/.conversate/scripts/conv_cli.py doctor
 ```
 
-To point the store elsewhere (a shared vault, a personal brain), set `$CONVERSATE_ROOT`
-(or the legacy `$BRAIN_CONV`), or pass `--conv-root PATH`. Full resolution rules,
-commands, and the payload schema are in `references/cli.md`.
+To operate on a non-default compatibility root, pass `--conv-root PATH` explicitly. That
+is not the normal plugin model. Full resolution rules, commands, and the conversation
+JSON shape are in `references/cli.md`.
 
 ## Requirements
 
@@ -117,11 +151,12 @@ commands, and the payload schema are in `references/cli.md`.
 - Optional external tools improve search: `rg`, `fff`, `semble` (or `uvx semble`). Absent
   those, the CLI degrades gracefully to a built-in body scorer.
 
-The engine (`scripts/conv_cli.py`) is a single dependency-free file and owns every store
-mutation. See `.arca/space/conversate-sp/what/` for the architecture, file manifest, and
-flow diagrams.
+The CLI (`scripts/conv_cli.py`) is a single dependency-free file and owns every
+Conversation database mutation. See `.arca/space/conversate-sp/what/` for the
+architecture, file manifest, and flow diagrams.
 
 ## Notes
 
-- **Never place an `AGENTS.md` inside `.conversate/`.** pi mis-detects `AGENTS.md` files
-  inside skill dirs as skills (pi issue #2473), so keep the store payload clean of them.
+- **Never place an `AGENTS.md` inside the Plugin installation root.** pi mis-detects
+  `AGENTS.md` files inside skill dirs as skills (pi issue #2473), so keep
+  `~/.conversate/` clear of agent instruction files.

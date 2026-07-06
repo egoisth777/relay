@@ -14,15 +14,18 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "conv_cli.py"
 
-# Env vars that influence store-root resolution; stripped so a "clean" run only
-# resolves via flag/marker, never an ambient store.
+# Env vars that used to influence root resolution; stripped so a "clean" run only
+# resolves through the default Plugin installation root or an explicit flag.
 _RESOLUTION_ENV = ("CONVERSATE_ROOT", "BRAIN_CONV", "CONV_USE_UVX_SEMBLE")
 
 
-def clean_env(**overrides: object) -> dict[str, str]:
+def clean_env(*, home: Path | None = None, **overrides: object) -> dict[str, str]:
     env = dict(os.environ)
     for key in _RESOLUTION_ENV:
         env.pop(key, None)
+    if home is not None:
+        env["HOME"] = str(home)
+        env["USERPROFILE"] = str(home)
     for key, value in overrides.items():
         env[key] = str(value)
     return env
