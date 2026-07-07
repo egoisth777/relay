@@ -11,3 +11,7 @@ tools/profiler/results/
 tools/profiler/*.prof
 tools/profiler/**/*.prof
 /.arca/
+
+# locally-installed agent skill marketplace (not conversate source)
+.agents/
+skills-lock.json

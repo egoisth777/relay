@@ -156,6 +156,10 @@ class Ctx:
     def pi_hook_file(self) -> Path:
         return Path.home().joinpath(*PI_HOOK_DEST)
 
+    @property
+    def omp_hook_file(self) -> Path:
+        return Path.home().joinpath(*OMP_HOOK_DEST)
+
     def disp(self, path: Path) -> str:
         """Path relative to target when possible, else absolute - for readable output."""
         path = Path(path)
@@ -267,7 +271,9 @@ def _resolve_python3_command(
     )
 
 
-_WINDOWS_SHELL_META = set("&()[]{}^=;!'+,`~|<>")
+# Backslash is included so a bare Windows path (no spaces) is still quoted; an unquoted
+# backslash path is mangled by the POSIX-style shell that runs hook commands.
+_WINDOWS_SHELL_META = set("&()[]{}^=;!'+,`~|<>\\")
 
 
 def _quote_windows_shell_arg(arg: str) -> str:
@@ -321,6 +327,12 @@ def _resolve_powershell_executable(
 
 
 def _claude_hook_command(ctx: Ctx) -> str:
+    # Claude Code runs UserPromptSubmit hooks through a shell that on Windows is POSIX-style and
+    # strips backslashes from an UNQUOTED path (C:\Users\... -> C:Users...), so pwsh never finds
+    # the script. Quote every path token so the backslashes survive: a double-quoted backslash
+    # path is literal under both cmd.exe and a POSIX sh (these paths contain no $, `, " or
+    # backslash-escape sequence). Backslash is in _WINDOWS_SHELL_META, so even a space-free path
+    # is quoted; flags stay bare.
     script_path = ctx.canonical_hooks / "claude" / "conv-turn-counter.ps1"
     args: list[str] = [_resolve_powershell_executable(), "-NoProfile"]
     if os.name == "nt":
@@ -1045,7 +1057,10 @@ def _codex_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
             for hook in hooks:
                 if not _is_our_hook(hook):
                     continue
-                hook["command"] = _codex_hook_command(python_command, script_path, windows=False)
+                # Some Codex builds on Windows execute the primary `command`
+                # field instead of `commandWindows`, so both must be runnable
+                # by the local shell when installing on Windows.
+                hook["command"] = _codex_hook_command(python_command, script_path, windows=os.name == "nt")
                 hook["commandWindows"] = _codex_hook_command(python_command, script_path, windows=True)
                 rewritten += 1
     if rewritten == 0:
@@ -1176,7 +1191,7 @@ def wire_hooks(ctx: Ctx, hooks: set[str]) -> None:
                         ctx.pi_hook_file, ctx, "pi")
     if "omp" in hooks:
         _copy_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
-                        ctx.target.joinpath(*OMP_HOOK_DEST), ctx, "omp")
+                        ctx.omp_hook_file, ctx, "omp")
     if "codex" in hooks:
         wire_codex_hook(ctx)
 
@@ -1309,7 +1324,7 @@ def do_uninstall(ctx: Ctx) -> int:
     _remove_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
                       ctx.pi_hook_file, ctx, "pi")
     _remove_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
-                      ctx.target.joinpath(*OMP_HOOK_DEST), ctx, "omp")
+                      ctx.omp_hook_file, ctx, "omp")
     _unwire_json_hooks(ctx.codex_hooks_json, ctx, "codex", remove_empty_file=True)
     _unwire_json_hooks(ctx.claude_settings_json, ctx, "claude", remove_empty_file=False)
     emit(f"left Conversation database untouched: {ctx.conversation_database}")
@@ -1566,7 +1581,7 @@ def do_status(ctx: Ctx) -> int:
 
     emit(f"hook claude: {_json_hook_status(ctx.claude_settings_json, ctx.canonical_hooks / 'claude' / 'conv-turn-counter.ps1')} ({ctx.claude_settings_json})")
     emit(f"hook pi: {'wired' if ctx.pi_hook_file.is_file() else 'not wired'}")
-    emit(f"hook omp: {'wired' if ctx.target.joinpath(*OMP_HOOK_DEST).is_file() else 'not wired'}")
+    emit(f"hook omp: {'wired' if ctx.omp_hook_file.is_file() else 'not wired'}")
     emit(f"hook codex: {_json_hook_status(ctx.codex_hooks_json, ctx.canonical_hooks / 'codex' / 'conv_turn_counter.py')} ({ctx.codex_hooks_json})")
     return 0
 
@@ -1577,10 +1592,8 @@ def _installed_hook_set(ctx: Ctx) -> set[str]:
         hooks.add("claude")
     if ctx.pi_hook_file.is_file() and _hook_file_is_ours(ctx.pi_hook_file):
         hooks.add("pi")
-    for name, parts in (("omp", OMP_HOOK_DEST),):
-        path = ctx.target.joinpath(*parts)
-        if path.is_file() and _hook_file_is_ours(path):
-            hooks.add(name)
+    if ctx.omp_hook_file.is_file() and _hook_file_is_ours(ctx.omp_hook_file):
+        hooks.add("omp")
     if _hook_wired_codex(ctx):
         hooks.add("codex")
     return hooks
@@ -1597,10 +1610,10 @@ def _available_repair_hook_set(ctx: Ctx) -> set[str]:
             ctx.pi_hook_file.is_file() and _hook_file_is_ours(ctx.pi_hook_file)
         ):
             hooks.add("pi")
-        for name, parts in (("omp", OMP_HOOK_DEST),):
-            path = ctx.target.joinpath(*parts)
-            if not os.path.lexists(path) or (path.is_file() and _hook_file_is_ours(path)):
-                hooks.add(name)
+        if not os.path.lexists(ctx.omp_hook_file) or (
+            ctx.omp_hook_file.is_file() and _hook_file_is_ours(ctx.omp_hook_file)
+        ):
+            hooks.add("omp")
     return hooks
 
 

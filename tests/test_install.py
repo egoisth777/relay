@@ -101,9 +101,15 @@ def pi_hooks_path(root: Path, *, home: Path | None = None) -> Path:
     return (home if home is not None else agent_home_for(root)).joinpath(*PI_HOOK)
 
 
+def omp_hooks_path(root: Path, *, home: Path | None = None) -> Path:
+    return (home if home is not None else agent_home_for(root)).joinpath(*OMP_HOOK)
+
+
 def raw_hook_path(root: Path, hook_name: str, parts: tuple[str, ...]) -> Path:
     if hook_name == "pi":
         return pi_hooks_path(root)
+    if hook_name == "omp":
+        return omp_hooks_path(root)
     return root.joinpath(*parts)
 
 
@@ -485,7 +491,8 @@ def test_uninstall_removes_plugins_but_preserves_convs(tmp_path):
         assert not os.path.lexists(tmp_path.joinpath(*parts))
     # hook files removed
     assert not pi_hooks_path(tmp_path).exists()
-    assert not (tmp_path / ".omp" / "hooks" / "pre" / "conv-turn-counter.ts").exists()
+    assert not omp_hooks_path(tmp_path).exists()
+    assert not os.path.lexists(tmp_path / ".omp")
     # Conversation database and the planted record remain
     assert (tmp_path / "SKILL.md").is_file()
     assert planted.is_file()
@@ -505,7 +512,7 @@ def test_uninstall_dry_run_with_hooks_installed_changes_nothing(tmp_path):
     watched = [
         root.joinpath(*CANONICAL_PLUGIN) / "SKILL.md",
         pi_hooks_path(root),
-        root.joinpath(*OMP_HOOK),
+        omp_hooks_path(root),
         codex_hooks_path(root),
         claude_settings_path(root),
     ]
@@ -608,6 +615,8 @@ def test_codex_hook_command_quotes_verified_python_and_script_paths_with_spaces(
     assert str(script) in hook["commandWindows"]
     assert "__CONVERSATE_" not in hook["command"] + hook["commandWindows"]
     assert f'"{script}"' in hook["commandWindows"]
+    if os.name == "nt":
+        assert f'"{script}"' in hook["command"]
     assert not hook["command"].lstrip().startswith("python3 ")
     assert not hook["commandWindows"].lstrip().startswith("python3 ")
 
@@ -619,18 +628,22 @@ def test_generated_hook_commands_execute_from_installed_configs_with_ampersand_p
 
     codex_hook = conversate_codex_hook(root)
     codex_script = root / "hooks" / "codex" / "conv_turn_counter.py"
-    codex_command = codex_hook["commandWindows"] if os.name == "nt" else codex_hook["command"]
     if os.name == "nt":
         assert f'"{codex_script}"' in codex_hook["commandWindows"]
-    codex_run = subprocess.run(
-        codex_command,
-        shell=True,
-        input=json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": f"codex-{tmp_path.name}"}),
-        cwd=str(tmp_path),
-        capture_output=True,
-        text=True,
-    )
-    assert codex_run.returncode == 0, codex_run.stderr + codex_run.stdout
+        assert f'"{codex_script}"' in codex_hook["command"]
+        codex_commands = {"command": codex_hook["command"], "commandWindows": codex_hook["commandWindows"]}
+    else:
+        codex_commands = {"command": codex_hook["command"]}
+    for label, codex_command in codex_commands.items():
+        codex_run = subprocess.run(
+            codex_command,
+            shell=True,
+            input=json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": f"codex-{tmp_path.name}"}),
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+        )
+        assert codex_run.returncode == 0, f"{label}: " + codex_run.stderr + codex_run.stdout
 
     if not (shutil.which("pwsh") or shutil.which("powershell")):
         pytest.skip("PowerShell is not available to execute the generated Claude hook command")
@@ -758,7 +771,7 @@ def test_repair_dry_run_does_not_mutate_stale_payload_plugins_hooks_or_convs(tmp
     stale_codex_hook(root)
     stale_claude_hook(root)
     pi_hook = pi_hooks_path(root)
-    omp_hook = root.joinpath(*OMP_HOOK)
+    omp_hook = omp_hooks_path(root)
     write_stale_owned_raw_hook(pi_hook)
     write_stale_owned_raw_hook(omp_hook)
 
@@ -793,7 +806,7 @@ def test_repair_without_hooks_rewires_all_stale_owned_hooks(tmp_path):
     stale_codex_hook(root)
     stale_claude_hook(root)
     pi_hook = pi_hooks_path(root)
-    omp_hook = root.joinpath(*OMP_HOOK)
+    omp_hook = omp_hooks_path(root)
     write_stale_owned_raw_hook(pi_hook)
     write_stale_owned_raw_hook(omp_hook)
 
@@ -1054,6 +1067,8 @@ def test_conversate_python_windows_quoting_handles_shell_meta_and_trailing_backs
     incoming = install_mod._codex_hook_template_with_command(ctx, template)
     hook = incoming["UserPromptSubmit"][0]["hooks"][0]
     assert hook["commandWindows"].startswith('"C:\\Tools & Stuff\\Python (3)\\python.exe\\\\" -X utf8 ')
+    if os.name == "nt":
+        assert hook["command"].startswith('"C:\\Tools & Stuff\\Python (3)\\python.exe\\\\" -X utf8 ')
     assert " & " not in hook["commandWindows"].split('"', maxsplit=2)[2]
     assert "old" not in hook["command"] + hook["commandWindows"]
 
