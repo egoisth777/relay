@@ -57,15 +57,12 @@ def expected_agent_text_surfaces() -> set[str]:
         "README.md",
         "SKILL.md",
         "hooks/README.md",
-        "plugins/conv/SKILL.md",
-        "plugins/conv/.claude-plugin/plugin.json",
-        "plugins/conv/.codex-plugin/plugin.json",
-        "plugins/conv/hooks/README.md",
-        "commands/claude/conv/.claude-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        ".codex-plugin/plugin.json",
     }
     surfaces.update(rel(path) for path in (ROOT / "references").glob("*.md"))
-    surfaces.update(rel(path) for path in (ROOT / "plugins/conv/skills").glob("*/SKILL.md"))
-    surfaces.update(rel(path) for path in (ROOT / "commands/claude/conv/skills").glob("*/SKILL.md"))
+    surfaces.update(rel(path) for path in (ROOT / "skills").glob("*/SKILL.md"))
     return surfaces
 
 

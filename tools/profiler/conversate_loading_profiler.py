@@ -454,15 +454,14 @@ def operation_dataset_root(base: Path, config: Config, cache: dict[str, Any], na
 
 
 DIRECT_COMMON_PATH_SKILLS = {
-    "save": (REPO / "plugins" / "conv" / "skills" / "save" / "SKILL.md",),
-    "list": (REPO / "plugins" / "conv" / "skills" / "list" / "SKILL.md",),
-    "resume": (REPO / "plugins" / "conv" / "skills" / "resume" / "SKILL.md",),
+    "save": (REPO / "skills" / "save" / "SKILL.md",),
+    "list": (REPO / "skills" / "list" / "SKILL.md",),
+    "resume": (REPO / "skills" / "resume" / "SKILL.md",),
 }
 FIRST_USEFUL_ACTION_MARKER = "python ~/.conversate/scripts/conv_cli.py"
 BROAD_COMMON_PATH_FILES = {
     "SKILL.md",
-    "plugins/conv/SKILL.md",
-    "plugins/conv/skills/conversate/SKILL.md",
+    "skills/conversate/SKILL.md",
     "references/branching.md",
     "references/cli.md",
     "references/list.md",

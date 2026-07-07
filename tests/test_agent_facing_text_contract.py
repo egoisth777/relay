@@ -17,12 +17,10 @@ STATIC_TEXT_FILES = [
     "README.md",
     "SKILL.md",
     "hooks/README.md",
-    "plugins/conv/SKILL.md",
-    "plugins/conv/.claude-plugin/plugin.json",
-    "plugins/conv/.codex-plugin/plugin.json",
-    "plugins/conv/hooks/README.md",
-    "plugins/conv/skills/conversate/SKILL.md",
-    "commands/claude/conv/.claude-plugin/plugin.json",
+    "skills/conversate/SKILL.md",
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".codex-plugin/plugin.json",
     "references/branching.md",
     "references/cli.md",
     "references/list.md",
@@ -31,34 +29,13 @@ STATIC_TEXT_FILES = [
 ]
 
 DIRECT_COMMON_PATH_SKILLS = {
-    "save": (
-        "plugins/conv/skills/save/SKILL.md",
-        "commands/claude/conv/skills/save/SKILL.md",
-    ),
-    "list": (
-        "plugins/conv/skills/list/SKILL.md",
-        "commands/claude/conv/skills/list/SKILL.md",
-    ),
-    "resume": (
-        "plugins/conv/skills/resume/SKILL.md",
-        "commands/claude/conv/skills/resume/SKILL.md",
-    ),
-    "park": (
-        "plugins/conv/skills/park/SKILL.md",
-        "commands/claude/conv/skills/park/SKILL.md",
-    ),
-    "sidekick": (
-        "plugins/conv/skills/sidekick/SKILL.md",
-        "commands/claude/conv/skills/sidekick/SKILL.md",
-    ),
-    "continue": (
-        "plugins/conv/skills/continue/SKILL.md",
-        "commands/claude/conv/skills/continue/SKILL.md",
-    ),
-    "return": (
-        "plugins/conv/skills/return/SKILL.md",
-        "commands/claude/conv/skills/return/SKILL.md",
-    ),
+    "save": "skills/save/SKILL.md",
+    "list": "skills/list/SKILL.md",
+    "resume": "skills/resume/SKILL.md",
+    "park": "skills/park/SKILL.md",
+    "sidekick": "skills/sidekick/SKILL.md",
+    "continue": "skills/continue/SKILL.md",
+    "return": "skills/return/SKILL.md",
 }
 
 DIRECT_COMMON_PATH_COMMANDS = {
@@ -170,11 +147,7 @@ def agent_facing_skill_files() -> list[Path]:
 
 
 def plugin_skill_files() -> list[Path]:
-    return sorted((ROOT / "plugins" / "conv" / "skills").glob("*/SKILL.md"))
-
-
-def claude_command_skill_files() -> list[Path]:
-    return sorted((ROOT / "commands" / "claude" / "conv" / "skills").glob("*/SKILL.md"))
+    return sorted((ROOT / "skills").glob("*/SKILL.md"))
 
 
 def plugin_verb_skill_names() -> set[str]:
@@ -184,7 +157,7 @@ def plugin_verb_skill_names() -> set[str]:
 def direct_common_path_skill_files() -> list[Path]:
     return [
         path
-        for path in sorted(plugin_skill_files() + claude_command_skill_files())
+        for path in sorted(plugin_skill_files())
         if "## Common Path" in text_for(path)
     ]
 
@@ -201,7 +174,7 @@ def _json_strings(value) -> Iterator[str]:
 
 
 def hook_prompt_texts() -> Iterator[tuple[Path, str]]:
-    hook_roots = [ROOT / "hooks", ROOT / "plugins" / "conv" / "hooks"]
+    hook_roots = [ROOT / "hooks"]
     for root in hook_roots:
         if not root.exists():
             continue
@@ -330,8 +303,10 @@ def test_agent_facing_skill_frontmatter_is_valid_yaml_with_required_scalars() ->
             assert isinstance(value, str) and value.strip(), (
                 f"{path.relative_to(ROOT)} frontmatter {key!r} must be a non-empty string"
             )
-        assert frontmatter["name"] == path.parent.name, (
-            f"{path.relative_to(ROOT)} frontmatter name must match its containing folder"
+        expected_name = "conv" if path == ROOT / "SKILL.md" else path.parent.name
+        assert frontmatter["name"] == expected_name, (
+            f"{path.relative_to(ROOT)} frontmatter name must match "
+            f"{'the plugin name conv (root entrypoint)' if path == ROOT / 'SKILL.md' else 'its containing folder'}"
         )
 
         if path.parent.parent.name == "skills" and frontmatter["name"] != "conversate":
@@ -347,16 +322,15 @@ def test_agent_facing_skill_frontmatter_is_valid_yaml_with_required_scalars() ->
 
 
 def test_direct_common_paths_do_not_front_load_broad_docs() -> None:
-    for verb, rel_paths in DIRECT_COMMON_PATH_SKILLS.items():
-        for rel_path in rel_paths:
-            path = ROOT / rel_path
-            common = _common_path_text(path)
-            assert "Do not load broad instructions for the common path" in common
-            assert "~/.conversate/references/" not in common
-            assert "~/.conversate/SKILL.md" not in text_for(path)
-            assert "follow it exactly" not in common
-            for command in DIRECT_COMMON_PATH_COMMANDS[verb]:
-                assert command in common, f"{rel_path} does not teach {command!r}"
+    for verb, rel_path in DIRECT_COMMON_PATH_SKILLS.items():
+        path = ROOT / rel_path
+        common = _common_path_text(path)
+        assert "Do not load broad instructions for the common path" in common
+        assert "~/.conversate/references/" not in common
+        assert "~/.conversate/SKILL.md" not in text_for(path)
+        assert "follow it exactly" not in common
+        for command in DIRECT_COMMON_PATH_COMMANDS[verb]:
+            assert command in common, f"{rel_path} does not teach {command!r}"
 
 
 def test_pre_action_common_paths_do_not_reference_broad_docs_by_relative_or_bare_paths() -> None:
@@ -374,59 +348,25 @@ def test_pre_action_common_paths_do_not_reference_broad_docs_by_relative_or_bare
 
 
 def test_direct_references_are_lazy_after_first_cli_action() -> None:
-    for rel_paths in DIRECT_COMMON_PATH_SKILLS.values():
-        for rel_path in rel_paths:
-            path = ROOT / rel_path
-            text = text_for(path)
-            first_cli = text.index("python ~/.conversate/scripts/conv_cli.py")
-            lazy_refs = text.index("## Lazy References")
-            first_reference = text.index("~/.conversate/references/")
-            lazy_text = text[lazy_refs:]
-            assert first_cli < first_reference
-            assert lazy_refs < first_reference
-            assert re.search(r"Only after .*advanced", lazy_text), f"{rel_path} does not gate refs on advanced behavior"
+    for rel_path in DIRECT_COMMON_PATH_SKILLS.values():
+        path = ROOT / rel_path
+        text = text_for(path)
+        first_cli = text.index("python ~/.conversate/scripts/conv_cli.py")
+        lazy_refs = text.index("## Lazy References")
+        first_reference = text.index("~/.conversate/references/")
+        lazy_text = text[lazy_refs:]
+        assert first_cli < first_reference
+        assert lazy_refs < first_reference
+        assert re.search(r"Only after .*advanced", lazy_text), f"{rel_path} does not gate refs on advanced behavior"
 
 
 def test_direct_branch_common_paths_use_primitives_not_manual_record_flows() -> None:
     forbidden = ("upsert --stdin", "set-status", "regen-refs", "follow it exactly")
     for verb in ("sidekick", "continue", "return"):
-        for rel_path in DIRECT_COMMON_PATH_SKILLS[verb]:
-            common = _common_path_text(ROOT / rel_path)
-            for phrase in forbidden:
-                assert phrase not in common, f"{rel_path} teaches manual branch flow {phrase!r}"
-
-
-def test_claude_command_skill_names_match_plugin_verb_skill_names() -> None:
-    command_names = {path.parent.name for path in claude_command_skill_files()}
-    plugin_names = plugin_verb_skill_names()
-
-    assert command_names == plugin_names, (
-        f"Claude command mirror skills mismatch plugin verb skills: "
-        f"missing={sorted(plugin_names - command_names)}, extra={sorted(command_names - plugin_names)}"
-    )
-
-
-def test_claude_command_skill_text_matches_plugin_skill_text_for_every_command_skill() -> None:
-    plugin_root = ROOT / "plugins" / "conv" / "skills"
-    command_files = claude_command_skill_files()
-    assert command_files, "expected Claude command mirror skills to be present"
-    for command_path in command_files:
-        plugin_path = plugin_root / command_path.parent.name / "SKILL.md"
-        assert plugin_path.is_file(), f"missing plugin source for {command_path.parent.name}"
-        assert bytes_for(command_path) == bytes_for(plugin_path), (
-            f"{command_path.relative_to(ROOT)} byte-drifted from {plugin_path.relative_to(ROOT)}"
-        )
-
-
-def test_claude_command_skill_flags_match_plugin_skill_flags() -> None:
-    plugin_root = ROOT / "plugins" / "conv" / "skills"
-    command_root = ROOT / "commands" / "claude" / "conv" / "skills"
-    for command_skill in sorted(command_root.glob("*/SKILL.md")):
-        plugin_skill = plugin_root / command_skill.parent.name / "SKILL.md"
-        assert plugin_skill.is_file(), f"missing plugin source for {command_skill.parent.name}"
-        plugin_flag = _frontmatter_value(text_for(plugin_skill), "disable-model-invocation")
-        command_flag = _frontmatter_value(text_for(command_skill), "disable-model-invocation")
-        assert command_flag == plugin_flag, f"{command_skill.relative_to(ROOT)} flag drifted from plugin copy"
+        rel_path = DIRECT_COMMON_PATH_SKILLS[verb]
+        common = _common_path_text(ROOT / rel_path)
+        for phrase in forbidden:
+            assert phrase not in common, f"{rel_path} teaches manual branch flow {phrase!r}"
 
 
 def test_agent_text_never_teaches_repo_local_convs_as_default_database() -> None:

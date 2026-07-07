@@ -4,6 +4,36 @@ Optional per-harness hooks that inject `CONV AUTO-SAVE` reminders so the `conv` 
 checkpoints long sessions automatically. Hooks are an installer concern; the plugin
 works without them (in a harness with no hooks it self-triggers saves at milestones).
 
+## Installer-managed, not plugin-native
+
+These hooks are **installer-managed and per-host**. There is deliberately no
+`hooks/hooks.json` that Claude Code would auto-load via `${CLAUDE_PLUGIN_ROOT}`
+at the plugin root, so adding `conv` as a native marketplace plugin registers
+the **skills only** — it does not activate auto-save. `scripts/install.py` is
+what wires each host's hook script into that host's own config surface:
+
+| Host | Hook source | Wired into |
+|------|-------------|------------|
+| Claude Code | `claude/conv-turn-counter.ps1` | `~/.claude/settings.json` |
+| Codex | `codex/conv_turn_counter.py` | `~/.codex/hooks.json` |
+| pi / omp | `pi/conv-turn-counter.ts` | `~/.pi/agent/extensions/`, `<target>/.omp/hooks/pre/` |
+
+The installer also creates the installed CLI (`scripts/conv_cli.py`) and the
+Conversation database the hooks depend on, which is why a native-plugin install
+alone is not enough to enable auto-save. This per-host layout is a deliberate
+deviation from the superpowers plugin convention.
+
+## Internal repair mirror
+
+`scripts/install.py` also plants a copy of this hook tree at
+`<install-root>/conv/hooks/`, alongside the canonical `<install-root>/hooks/`.
+It is an internal, generated mirror — not a second hook surface and not something
+any host is wired to — kept as the pristine source so `install.py --doctor-fix`
+can self-heal a corrupted or stale canonical `<install-root>/hooks/` when
+repairing an installed tree in place (without the original checkout). Both trees
+are generated from this single source `hooks/` directory; do not hand-edit the
+installed mirror.
+
 ## claude/
 
 - `conv-turn-counter.ps1` — a Claude Code **UserPromptSubmit** hook. It keeps a

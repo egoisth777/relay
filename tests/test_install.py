@@ -188,8 +188,6 @@ def assert_installed(target: Path) -> None:
     assert (plugin / "SKILL.md").is_file()
     assert (plugin / ".claude-plugin" / "plugin.json").is_file()
     assert (plugin / ".codex-plugin" / "plugin.json").is_file()
-    assert (plugin / "hooks" / "pi" / "conv-turn-counter.ts").is_file()
-    assert (plugin / "hooks" / "codex" / "conv_turn_counter.py").is_file()
     for skill in CONV_SKILLS:
         assert (plugin / "skills" / skill / "SKILL.md").is_file()
     # legacy nested plugin/link paths must not be created on fresh install
@@ -1149,7 +1147,7 @@ def test_update_and_repair_recover_expected_file_directory_collisions(tmp_path, 
     plugin_skill_file = root.joinpath(*CANONICAL_PLUGIN) / "skills" / "save" / "SKILL.md"
     expected = {
         payload_file: (REPO_ROOT / "references" / "save.md").read_bytes(),
-        plugin_skill_file: (REPO_ROOT / "plugins" / "conv" / "skills" / "save" / "SKILL.md").read_bytes(),
+        plugin_skill_file: (REPO_ROOT / "skills" / "save" / "SKILL.md").read_bytes(),
     }
     for path in expected:
         replace_file_with_directory(path)

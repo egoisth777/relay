@@ -94,7 +94,7 @@ def test_common_path_loader_checks_direct_verbs_before_first_action() -> None:
     for verb in DIRECT_VERBS:
         verb_detail = detail["verbs"][verb]
         assert len(verb_detail["files"]) == 1
-        assert verb_detail["files"][0]["path"] == f"plugins/conv/skills/{verb}/SKILL.md"
+        assert verb_detail["files"][0]["path"] == f"skills/{verb}/SKILL.md"
         assert "python ~/.conversate/scripts/conv_cli.py" in verb_detail["first_useful_action"]
         assert verb_detail["pre_action_broad_mentions"] == []
 

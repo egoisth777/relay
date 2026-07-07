@@ -293,9 +293,6 @@ def test_hook_scripts_do_not_gate_on_cwd_local_conversate_marker() -> None:
         REPO_ROOT / "hooks" / "claude" / "conv-turn-counter.ps1",
         REPO_ROOT / "hooks" / "codex" / "conv_turn_counter.py",
         REPO_ROOT / "hooks" / "pi" / "conv-turn-counter.ts",
-        REPO_ROOT / "plugins" / "conv" / "hooks" / "claude" / "conv-turn-counter.ps1",
-        REPO_ROOT / "plugins" / "conv" / "hooks" / "codex" / "conv_turn_counter.py",
-        REPO_ROOT / "plugins" / "conv" / "hooks" / "pi" / "conv-turn-counter.ts",
     ]
     forbidden = (
         "local compatibility marker",
@@ -314,20 +311,15 @@ def test_moorage_install_artifacts_are_not_shipped() -> None:
         "moorage.toml",
         "hooks/claude/moorage-snippet.json",
         "hooks/codex/moorage-hooks.json",
-        "plugins/conv/hooks/claude/moorage-snippet.json",
-        "plugins/conv/hooks/codex/moorage-hooks.json",
     )
     for rel in removed_artifacts:
         assert not (REPO_ROOT / rel).exists(), f"{rel} should not be a supported install artifact"
 
 
 def test_agent_plugin_metadata_exposes_same_conv_verbs_as_shipped_plugin_skills() -> None:
-    plugin_root = REPO_ROOT / "plugins" / "conv"
+    plugin_root = REPO_ROOT
     claude_manifest = json.loads((plugin_root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     codex_manifest = json.loads((plugin_root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    command_claude_manifest = json.loads(
-        (REPO_ROOT / "commands" / "claude" / "conv" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
-    )
 
     source_skills = source_conv_skill_names(plugin_root)
     source_verbs = source_conv_verbs(plugin_root)
@@ -340,10 +332,6 @@ def test_agent_plugin_metadata_exposes_same_conv_verbs_as_shipped_plugin_skills(
         "Codex manifest description": plain_verb_inventory_from_description(codex_manifest, "Codex manifest"),
         "Codex manifest longDescription": conv_verbs_in_text(codex_interface["longDescription"]),
         "Claude manifest description": plain_verb_inventory_from_description(claude_manifest, "Claude manifest"),
-        "Claude command manifest description": plain_verb_inventory_from_description(
-            command_claude_manifest,
-            "Claude command manifest",
-        ),
         "README plugin inventory": conv_verbs_in_text((REPO_ROOT / "README.md").read_text(encoding="utf-8")),
         "root skill routing": conv_verbs_in_text((REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")),
         "plugin skill routing": conv_verbs_in_text((plugin_root / "SKILL.md").read_text(encoding="utf-8")),
@@ -355,25 +343,10 @@ def test_agent_plugin_metadata_exposes_same_conv_verbs_as_shipped_plugin_skills(
         assert verbs == source_verbs, f"{label} exposes {sorted(verbs)} but source skills are {sorted(source_verbs)}"
 
 
-def test_root_and_plugin_hook_templates_stay_in_source_parity() -> None:
-    root_hooks = REPO_ROOT / "hooks"
-    plugin_hooks = REPO_ROOT / "plugins" / "conv" / "hooks"
-    for source_path in sorted(path for path in root_hooks.rglob("*") if path.is_file()):
-        if "__pycache__" in source_path.parts or source_path.suffix in {".pyc", ".pyo"}:
-            continue
-        rel = source_path.relative_to(root_hooks)
-        plugin_path = plugin_hooks / rel
-        assert plugin_path.is_file(), f"plugin hook copy missing {rel.as_posix()}"
-        assert normalized_template_bytes(plugin_path) == normalized_template_bytes(source_path), (
-            f"plugin hook copy drifted: {rel.as_posix()}"
-        )
-
-
 def test_static_codex_hook_templates_are_template_only_commands() -> None:
     runtime_interpreter = re.compile(r'^\s*"?(?:python3?|py(?:\s+-3)?)(?:"|\s|$)', re.IGNORECASE)
     for rel in (
         "hooks/codex/hooks.json",
-        "plugins/conv/hooks/codex/hooks.json",
     ):
         path = REPO_ROOT / rel
         entries = json_hook_entries(path)
@@ -394,7 +367,6 @@ def test_static_codex_hook_templates_are_template_only_commands() -> None:
 def test_static_claude_hook_templates_keep_no_profile() -> None:
     for rel in (
         "hooks/claude/settings-snippet.json",
-        "plugins/conv/hooks/claude/settings-snippet.json",
     ):
         commands = [
             entry.get("command", "")

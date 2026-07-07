@@ -1,16 +1,16 @@
 ---
-name: conversate
-description: Persist, retrieve, list, park, branch, return, continue, and repair topic-bound conversations in the Conversation database as distilled, resumable records. Use for explicit commands like conv:save, conv:resume, conv:list, conv:park, conv:sidekick, conv:return, conv:continue, conv:regen; natural language such as save this, checkpoint this, resume the auth discussion, what conversations are open, sidekick this, bring the branch back, or continue fresh; and any injected CONV AUTO-SAVE reminders.
+name: conv
+description: Plugin entrypoint for the conversate skill group. Use for conversation persistence tasks such as save this, checkpoint this, resume the auth discussion, list open conversations, park this, sidekick this, return from a branch, continue fresh, or repair/regenerate the Conversation database.
 ---
 
-# conversate
+# conv plugin
 
-Use this instruction file to manage the Conversation database. A record is not a
-transcript: it is a distilled, resumable artifact any agent can pick up cold.
-Plugin source is this repo. Installed plugin files live under the Plugin installation
-root, `~/.conversate/` by default. Conversation records live under the Conversation
-database, `~/.conversate/convs/`, which is the source of truth for every harness
-(Claude Code, pi, oh-my-pi, and Codex).
+Use this plugin entrypoint when the user asks for a conversate action but did not name
+one of the narrower verb skills. A record is not a transcript: it is a distilled,
+resumable artifact any agent can pick up cold. Plugin source is this repo. Installed
+plugin files live under the Plugin installation root, `~/.conversate/` by default.
+Conversation records live under the Conversation database, `~/.conversate/convs/`, which
+is the source of truth for every harness (Claude Code, pi, oh-my-pi, and Codex).
 
 ## Invariants
 

@@ -1,0 +1,12 @@
+{
+  "name": "conversate",
+  "description": "conversate conversation recorder — the conv plugin marketplace.",
+  "owner": { "name": "conversate" },
+  "plugins": [
+    {
+      "name": "conv",
+      "source": "./",
+      "description": "Save, resume, list, park, sidekick, return, continue, and regen topic-bound conversations as distilled, resumable records in the Conversation database."
+    }
+  ]
+}
