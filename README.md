@@ -36,6 +36,52 @@ source of truth for saved conversation records:
 
 Records (`convs/`) are trackable in git; the index and caches are ignored.
 
+## Source layout
+
+The repository root **is** the plugin root (the canonical Claude Code layout):
+the tree that ships the skills is the tree that gets packaged. There is no
+nested legacy source tree — every component ships from the root.
+
+```
+/ (repo root == plugin root)
+├── .claude-plugin/
+│   ├── plugin.json              # plugin manifest
+│   └── marketplace.json         # single-plugin marketplace (source ".")
+├── .codex-plugin/
+│   └── plugin.json              # Codex manifest
+├── SKILL.md                     # plugin entrypoint (name: conv)
+├── skills/
+│   ├── conversate/SKILL.md      # base skill (name: conversate)
+│   └── {save,resume,list,park,sidekick,return,continue,regen}/SKILL.md  # eight verb skills
+├── hooks/                       # canonical per-host hook sources (see hooks/README.md)
+│   ├── claude/ codex/ pi/
+│   └── README.md
+├── references/                  # playbooks: save, resume, list, branching, cli
+├── scripts/                     # conv_cli.py + install.py
+├── tests/                       # pytest suite
+├── tools/profiler/              # loading profiler + runtime budgets
+├── README.md  LICENSE  .gitignore
+```
+
+### Native plugin install vs `install.py`
+
+`conv` can be added as a **native Claude Code marketplace plugin** via
+`.claude-plugin/marketplace.json` (a single-plugin marketplace whose source is
+`.`). A native install registers the **skills only**: it does not wire the
+auto-save turn-counter hooks, and it does not create the installed CLI or the
+Conversation database that those skills delegate to.
+
+The auto-save hooks are **installer-managed and per-host, not plugin-native**.
+There is intentionally no `hooks/hooks.json` using `${CLAUDE_PLUGIN_ROOT}` at the
+plugin root. `scripts/install.py` is what wires the per-host hook scripts
+(`hooks/claude/`, `hooks/codex/`, `hooks/pi/`) into each host's own config
+(`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.pi/agent/extensions/`,
+`<target>/.omp/hooks/pre/`) and provisions the CLI + Conversation database the
+hooks depend on. This is a deliberate deviation from the superpowers plugin
+convention: conversate's hooks must resolve to a real installation root, so they
+are bound by the installer rather than by the plugin loader. See
+`hooks/README.md` for the per-host wiring details.
+
 ## Supported agents
 
 conversate is packaged as a plugin named `conv` with a group of skills backed by one

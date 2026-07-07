@@ -35,8 +35,12 @@ COPY_MARKER = ".conversate-installed-copy"
 
 # Runtime files copied into the universal installation root. Explicit allow-list
 # (not copy-all-minus) so tests, .git, .arca, convs data, etc. are never picked up.
-PAYLOAD_FILES = ("SKILL.md", "LICENSE", "scripts/conv_cli.py", "scripts/install.py")
+PAYLOAD_FILES = ("LICENSE", "scripts/conv_cli.py", "scripts/install.py")
 PAYLOAD_DIRS = ("references",)
+# Universal-root SKILL.md keeps frontmatter `name: conversate`, so it is sourced
+# from the base skill, NOT the root plugin entrypoint SKILL.md (which is name: conv
+# and is consumed by the plugin walk -> <T>/conv/SKILL.md). src relpath -> dst relpath.
+PAYLOAD_FILE_MAP = {("skills", "conversate", "SKILL.md"): ("SKILL.md",)}
 HOOK_SOURCE_DIR = "hooks"
 IGNORE_DIR_NAMES = {"__pycache__", ".git", ".semble", "convs", ".arca"}
 IGNORE_SUFFIXES = {".pyc", ".pyo"}
@@ -60,9 +64,15 @@ OMP_HOOK_DEST = (".omp", "hooks", "pre", "conv-turn-counter.ts")
 CODEX_HOOKS_JSON = (".codex", "hooks.json")
 CLAUDE_SETTINGS = (".claude", "settings.json")
 
-# Shared `conv` plugin skill group. Source lives in the checkout; the live runtime
-# copy goes to the canonical installed plugin root under the universal root.
-PLUGIN_SRC = ("plugins", "conv")
+# Shared `conv` plugin skill group. The plugin root IS the repo root
+# (repo root == plugin root), so the source is ctx.source itself. Only these named
+# components are copied into the installed plugin root — never an rglob of the whole
+# checkout (which would sweep scripts/tests/tools/references/README/LICENSE). `hooks`
+# is included deliberately: it plants a pristine <T>/conv/hooks mirror alongside the
+# canonical <T>/hooks, both generated from the single source hooks/ tree. Same-source
+# repair (doctor --fix on an installed root) refreshes a corrupted <T>/hooks from
+# that mirror, since <T>/hooks is otherwise its own source and dest (a no-op copy).
+PLUGIN_COMPONENTS = ("SKILL.md", "skills", ".claude-plugin", ".codex-plugin", "hooks")
 CLAUDE_PLUGIN_MANIFEST = (".claude-plugin", "plugin.json")
 CODEX_PLUGIN_MANIFEST = (".codex-plugin", "plugin.json")
 
@@ -153,6 +163,14 @@ class Ctx:
             return str(path.relative_to(self.target))
         except ValueError:
             return str(path)
+
+
+def plugin_source(ctx: Ctx) -> Path:
+    # Plugin components (SKILL.md/skills/manifests) live at the repo root normally,
+    # but under <root>/conv when repairing an installed tree in place.
+    if ctx.repair and _same_path(ctx.source, ctx.target):
+        return ctx.canonical_plugin
+    return ctx.source
 
 
 def emit(msg: str) -> None:
@@ -384,11 +402,15 @@ def remove_link(link_path: Path, ctx: Ctx) -> None:
 
 # -------------------------------------------------------------------- plugin files
 
-def iter_payload(source: Path):
+def iter_payload(source: Path, plugin_root: Path):
     for rel in PAYLOAD_FILES:
         p = source / rel
         if p.is_file():
             yield p, rel
+    for src_parts, dst_parts in PAYLOAD_FILE_MAP.items():
+        p = plugin_root.joinpath(*src_parts)
+        if p.is_file():
+            yield p, "/".join(dst_parts)
     for d in PAYLOAD_DIRS:
         base = source / d
         if not base.is_dir():
@@ -479,7 +501,7 @@ def copy_payload(ctx: Ctx) -> None:
     plans: list[tuple[Path, Path, str]] = []
     conflicts: list[str] = []
     expected_rels: set[Path] = set()
-    for src, rel in iter_payload(ctx.source):
+    for src, rel in iter_payload(ctx.source, plugin_source(ctx)):
         expected_rels.add(Path(rel))
         dest = conv_dir / Path(rel)
         action = _file_copy_action(src, dest, can_replace=ctx.update or ctx.force)
@@ -650,15 +672,23 @@ def remove_scan_entrypoint(ctx: Ctx, path: Path, label: str) -> None:
 # ----------------------------------------------------------------------------- plugin
 
 def iter_plugin_files(src: Path):
-    for f in sorted(src.rglob("*")):
-        if f.is_dir():
+    for component in PLUGIN_COMPONENTS:
+        base = src / component
+        if component == "SKILL.md":
+            if base.is_file():
+                yield base, Path(component)
             continue
-        rel = f.relative_to(src)
-        if any(part in IGNORE_DIR_NAMES for part in rel.parts):
+        if not base.is_dir():
             continue
-        if f.suffix in IGNORE_SUFFIXES:
-            continue
-        yield f, rel
+        for f in sorted(base.rglob("*")):
+            if f.is_dir():
+                continue
+            rel = f.relative_to(src)
+            if any(part in IGNORE_DIR_NAMES for part in rel.parts):
+                continue
+            if f.suffix in IGNORE_SUFFIXES:
+                continue
+            yield f, rel
 
 
 def prune_stale_plugin_files(ctx: Ctx, dest_root: Path, expected_rels: set[Path], label: str) -> tuple[int, int]:
@@ -697,11 +727,11 @@ def prune_stale_plugin_files(ctx: Ctx, dest_root: Path, expected_rels: set[Path]
 def _hook_tree_source(ctx: Ctx) -> Path | None:
     roots: list[Path] = []
     if ctx.repair and _same_path(ctx.source, ctx.target):
+        # Same-source repair: prefer the pristine <T>/conv/hooks mirror (regenerated
+        # from the single source hooks/ tree) so a corrupted <T>/hooks self-heals;
+        # <T>/hooks would otherwise be its own source and dest (a no-op copy).
         roots.append(ctx.canonical_plugin / HOOK_SOURCE_DIR)
-    roots.extend([
-        ctx.source / HOOK_SOURCE_DIR,
-        ctx.source.joinpath(*PLUGIN_SRC, HOOK_SOURCE_DIR),
-    ])
+    roots.append(ctx.source / HOOK_SOURCE_DIR)
     for root in roots:
         if root.is_dir():
             return root
@@ -780,9 +810,9 @@ def copy_canonical_hooks(ctx: Ctx) -> None:
 
 def install_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
     """Copy the shared conv plugin skill group into an installed plugin root."""
-    src = ctx.source.joinpath(*PLUGIN_SRC)
+    src = plugin_source(ctx)
     if not src.joinpath(*CLAUDE_PLUGIN_MANIFEST).is_file():
-        emit(f"{label}: source scaffold not found (plugins/conv); skipping")
+        emit(f"{label}: source scaffold not found (root .claude-plugin); skipping")
         return
     if dest_root.exists() and not _plugin_is_ours(dest_root):
         if not ctx.force:
@@ -1302,13 +1332,13 @@ def _expected_file_problems(expected_files, dest_root: Path) -> tuple[list[Path]
 
 
 def _payload_artifact_problems(ctx: Ctx) -> tuple[list[Path], list[Path]]:
-    return _expected_file_problems(iter_payload(ctx.source), ctx.universal_root)
+    return _expected_file_problems(iter_payload(ctx.source, plugin_source(ctx)), ctx.universal_root)
 
 
 def _plugin_artifact_problems(ctx: Ctx) -> tuple[list[Path], list[Path]]:
-    src = ctx.source.joinpath(*PLUGIN_SRC)
-    if not src.is_dir():
-        return [Path("/".join(PLUGIN_SRC))], []
+    src = plugin_source(ctx)
+    if not (src / "SKILL.md").is_file():
+        return [Path("SKILL.md")], []
     return _expected_file_problems(iter_plugin_files(src), ctx.canonical_plugin)
 
 
@@ -1582,22 +1612,18 @@ def _repair_hook_set(ctx: Ctx, value: str | None) -> set[str]:
 
 def _repair_source_missing(ctx: Ctx) -> list[str]:
     source = ctx.source
+    plugin = plugin_source(ctx)
     missing: list[str] = []
     for rel in PAYLOAD_FILES:
         if not (source / rel).is_file():
             missing.append(rel)
+    for src_parts in PAYLOAD_FILE_MAP:
+        if not plugin.joinpath(*src_parts).is_file():
+            missing.append("/".join(src_parts))
 
-    plugin_root = source.joinpath(*PLUGIN_SRC)
-    plugin_label = "/".join(PLUGIN_SRC)
-    if not plugin_root.is_dir() and ctx.repair and _same_path(ctx.source, ctx.target) and ctx.canonical_plugin.is_dir():
-        plugin_root = ctx.canonical_plugin
-        plugin_label = CANONICAL_PLUGIN_DEST[0]
-    if not plugin_root.is_dir():
-        missing.append(plugin_label)
-    else:
-        for rel in REQUIRED_PLUGIN_SOURCE_FILES:
-            if not (plugin_root / Path(rel)).is_file():
-                missing.append(f"{plugin_label}/{rel}")
+    for rel in REQUIRED_PLUGIN_SOURCE_FILES:
+        if not (plugin / Path(rel)).is_file():
+            missing.append(rel)
 
     hook_root = _hook_tree_source(ctx)
     if hook_root is None:
