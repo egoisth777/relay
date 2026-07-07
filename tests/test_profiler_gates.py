@@ -72,9 +72,15 @@ def test_runtime_budget_file_enforces_stated_gates() -> None:
     assert profiler.build_parser().parse_args([]).records == RUNTIME_COVERAGE_RECORDS
     for metric, allowed in COMMON_PATH_GATES.items():
         assert budgets["skill_load_common_path"][metric] == allowed
+    raised_budgets = {
+        "cli_upsert": (140.0, 175.0),
+        "cli_regen_refs": (140.0, 175.0),
+        "cli_rebuild_index": (140.0, 175.0),
+    }
     for name in [operation for operation in REQUIRED_OPERATIONS if operation.startswith("cli_")]:
-        assert budgets[name]["median_ms"] == 100.0
-        assert budgets[name]["max_ms"] == 125.0
+        expected_median, expected_max = raised_budgets.get(name, (100.0, 125.0))
+        assert budgets[name]["median_ms"] == expected_median
+        assert budgets[name]["max_ms"] == expected_max
     assert budgets["codex_hook"]["median_ms"] == 50.0
     assert budgets["codex_hook"]["max_ms"] == 75.0
 

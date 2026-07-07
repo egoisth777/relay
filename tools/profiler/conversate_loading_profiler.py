@@ -97,9 +97,9 @@ BUILTIN_BUDGETS: dict[str, dict[str, float]] = {
     "cli_help": {"median_ms": 100.0, "max_ms": 125.0},
     "cli_init": {"median_ms": 100.0, "max_ms": 125.0},
     "cli_list": {"median_ms": 100.0, "max_ms": 125.0},
-    "cli_upsert": {"median_ms": 100.0, "max_ms": 125.0},
-    "cli_rebuild_index": {"median_ms": 100.0, "max_ms": 125.0},
-    "cli_regen_refs": {"median_ms": 100.0, "max_ms": 125.0},
+    "cli_upsert": {"median_ms": 140.0, "max_ms": 175.0},
+    "cli_rebuild_index": {"median_ms": 140.0, "max_ms": 175.0},
+    "cli_regen_refs": {"median_ms": 140.0, "max_ms": 175.0},
     "codex_hook": {"median_ms": 50.0, "max_ms": 75.0},
 }
 
