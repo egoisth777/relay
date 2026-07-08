@@ -303,10 +303,10 @@ def test_agent_facing_skill_frontmatter_is_valid_yaml_with_required_scalars() ->
             assert isinstance(value, str) and value.strip(), (
                 f"{path.relative_to(ROOT)} frontmatter {key!r} must be a non-empty string"
             )
-        expected_name = "conv" if path == ROOT / "SKILL.md" else path.parent.name
+        expected_name = "conversate" if path == ROOT / "SKILL.md" else path.parent.name
         assert frontmatter["name"] == expected_name, (
             f"{path.relative_to(ROOT)} frontmatter name must match "
-            f"{'the plugin name conv (root entrypoint)' if path == ROOT / 'SKILL.md' else 'its containing folder'}"
+            f"{'the plugin name conversate (root entrypoint)' if path == ROOT / 'SKILL.md' else 'its containing folder'}"
         )
 
         if path.parent.parent.name == "skills" and frontmatter["name"] != "conversate":
@@ -398,11 +398,28 @@ def test_hook_snippets_and_reminders_do_not_teach_the_old_root_model() -> None:
             assert phrase not in lowered, f"{path.relative_to(ROOT)} prompt text contains {phrase!r}"
         if "conv-turn-counter" in prompt_text or "conv_turn_counter" in prompt_text:
             assert "~/.conversate/hooks/" in prompt_text or "hooks/" in prompt_text
-        if "CONV AUTO-SAVE" in prompt_text:
-            assert "conv plugin" in prompt_text
-            assert "conv:save" in prompt_text
+        if "CONVERSATE AUTO-SAVE" in prompt_text:
+            assert "Conversate plugin" in prompt_text
+            assert "/conversate:save" in prompt_text
             assert "consider saving" not in lowered
     assert seen, "expected hook prompt-facing text to be checked"
+
+
+def test_legacy_conv_auto_save_marker_is_only_documented_as_compatibility() -> None:
+    """The old CONV AUTO-SAVE marker may remain only as explicit legacy
+    compatibility; the current emitted marker is CONVERSATE AUTO-SAVE."""
+    legacy_words = ("legacy", "compatibility", "older", "previously")
+    offenders = []
+    for path in covered_files():
+        text = text_for(path)
+        if "CONV AUTO-SAVE" in text:
+            lowered = text.lower()
+            if not any(word in lowered for word in legacy_words):
+                offenders.append(path.relative_to(ROOT))
+    assert not offenders, (
+        "CONV AUTO-SAVE appears without legacy/compatibility framing in: "
+        + ", ".join(str(p) for p in offenders)
+    )
 
 
 def test_cwd_local_conversate_is_only_documented_as_compatibility() -> None:

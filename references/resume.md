@@ -1,6 +1,6 @@
-# conv resume
+# Conversate resume
 
-Use this for `conv:resume` and natural-language requests to resume or continue a previous discussion.
+Use this for `conversate:resume` and natural-language requests to resume or continue a previous discussion.
 
 ## Resolve Target
 

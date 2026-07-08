@@ -1,7 +1,7 @@
 {
-  "name": "conv",
-  "displayName": "conversate",
-  "description": "A plugin-owned skill group for the conversate conversation recorder: save, resume, list, park, sidekick, return, continue, and regen topic-bound records in the Conversation database.",
+  "name": "conversate",
+  "displayName": "Conversate",
+  "description": "A plugin-owned skill group for the Conversate conversation recorder: save, resume, list, park, sidekick, return, continue, and regen topic-bound records in the Conversation database.",
   "version": "0.1.0",
   "x-installed-by": "conversate"
 }

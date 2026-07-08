@@ -53,7 +53,7 @@ def source_conv_verbs(plugin_root: Path) -> set[str]:
 
 
 def conv_verbs_in_text(text: str) -> set[str]:
-    return set(re.findall(r"\bconv:([a-z][a-z0-9_-]*)\b", text))
+    return set(re.findall(r"\bconversate:([a-z][a-z0-9_-]*)\b", text))
 
 
 def plain_verb_inventory_from_description(manifest: dict, label: str) -> set[str]:
@@ -163,7 +163,7 @@ def test_codex_hook_counts_without_cwd_local_conversate_marker(tmp_path: Path) -
         assert proc.returncode == 0, proc.stderr + proc.stdout
         stdout = proc.stdout
 
-    assert "CONV AUTO-SAVE" in stdout
+    assert "CONVERSATE AUTO-SAVE" in stdout
 
 
 def test_codex_hook_ignores_malformed_non_object_and_non_prompt_payloads(tmp_path: Path) -> None:
@@ -201,7 +201,7 @@ def test_codex_hook_ignores_malformed_non_object_and_non_prompt_payloads(tmp_pat
         assert proc.stdout == ""
     threshold = run_hook(valid)
     assert threshold.returncode == 0, threshold.stderr + threshold.stdout
-    assert "CONV AUTO-SAVE" in threshold.stdout
+    assert "CONVERSATE AUTO-SAVE" in threshold.stdout
 
 
 def test_claude_hook_ignores_malformed_non_object_missing_session_and_non_prompt_payloads(tmp_path: Path) -> None:
@@ -247,7 +247,7 @@ def test_claude_hook_ignores_malformed_non_object_missing_session_and_non_prompt
             assert proc.stdout == ""
         threshold = run_hook(valid)
         assert threshold.returncode == 0, threshold.stderr + threshold.stdout
-        assert "CONV AUTO-SAVE" in threshold.stdout
+        assert "CONVERSATE AUTO-SAVE" in threshold.stdout
     finally:
         for counter in (session_counter, cwd_counter):
             try:
@@ -279,7 +279,7 @@ def test_claude_hook_corrupt_counter_resets_to_current_prompt(tmp_path: Path) ->
             proc = subprocess.run(command, input=payload, capture_output=True, text=True)
             assert proc.returncode == 0, proc.stderr + proc.stdout
             stdout = proc.stdout
-        assert "CONV AUTO-SAVE" in stdout
+        assert "CONVERSATE AUTO-SAVE" in stdout
         assert counter.read_text(encoding="utf-8").strip() == "10"
     finally:
         try:
@@ -386,10 +386,10 @@ def test_update_prunes_stale_installer_owned_plugin_files_but_preserves_records(
     before = b"conversation bytes survive plugin refresh\n"
     record.write_bytes(before)
 
-    stale_plugin_file = root / "conv" / "skills" / "obsolete" / "SKILL.md"
+    stale_plugin_file = root / "conversate" / "skills" / "obsolete" / "SKILL.md"
     stale_plugin_file.parent.mkdir(parents=True)
     stale_plugin_file.write_text("---\nname: obsolete\n---\n", encoding="utf-8")
-    stale_cache = root / "conv" / "hooks" / "codex" / "__pycache__" / "old.pyc"
+    stale_cache = root / "conversate" / "hooks" / "codex" / "__pycache__" / "old.pyc"
     stale_cache.parent.mkdir(parents=True)
     stale_cache.write_bytes(b"cache")
 

@@ -5,7 +5,7 @@ disable-model-invocation: false
 argument-hint: "[parent] [topic]"
 ---
 
-Run the conversate `conv:sidekick` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
+Run the Conversate `conversate:sidekick` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
 
 Do not load broad instructions for the common path; this file is enough to create a normal sidekick branch.
 

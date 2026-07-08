@@ -5,7 +5,7 @@ disable-model-invocation: false
 argument-hint: "[id-or-topic]"
 ---
 
-Run the conversate `conv:park` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
+Run the Conversate `conversate:park` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
 
 Do not load broad instructions for the common path; this file is enough to park a normal checkpoint.
 

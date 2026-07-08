@@ -65,7 +65,7 @@ def conversation_payload(*, summary_marker: str, resume_goal: str, updated: str)
                 "goal": resume_goal,
                 "next_steps": ["List, search, show, and rebuild from the global database"],
                 "open_questions": ["none"],
-                "suggested_skills": ["conv:resume"],
+                "suggested_skills": ["conversate:resume"],
             },
             "user_instructions": [
                 "Use isolated HOME and USERPROFILE",
@@ -329,7 +329,7 @@ class InstalledGlobalRootE2ESmokeTest(unittest.TestCase):
         self.assertTrue((self.home / ".codex" / "hooks.json").is_file())
 
     def test_installed_doctor_fix_reports_missing_installer_artifacts(self) -> None:
-        manifest = self.root / "conv" / ".claude-plugin" / "plugin.json"
+        manifest = self.root / "conversate" / ".claude-plugin" / "plugin.json"
         self.assertTrue(manifest.is_file())
         manifest.unlink()
 

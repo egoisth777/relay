@@ -35,7 +35,9 @@ import install as install_mod  # noqa: E402
 
 LEGACY_CLAUDE_LINK = (".claude", "skills", "conversate")
 LEGACY_AGENTS_LINK = (".agents", "skills", "conversate")
-CANONICAL_PLUGIN = ("conv",)
+CANONICAL_PLUGIN = ("conversate",)
+# Prior canonical installed plugin root (<root>/conv); legacy migration/cleanup only.
+LEGACY_CANONICAL_PLUGIN = ("conv",)
 LEGACY_CLAUDE_PLUGIN = (".claude", "skills", "conv")
 LEGACY_AGENTS_PLUGIN = (".agents", "skills", "conv")
 PI_HOOK = (".pi", "agent", "extensions", "conv-turn-counter.ts")
@@ -199,7 +201,7 @@ def assert_installed(target: Path) -> None:
     # legacy nested plugin/link paths must not be created on fresh install
     for parts in (LEGACY_CLAUDE_LINK, LEGACY_AGENTS_LINK):
         assert not os.path.lexists(target.joinpath(*parts))
-    for parts in (LEGACY_CLAUDE_PLUGIN, LEGACY_AGENTS_PLUGIN):
+    for parts in (LEGACY_CANONICAL_PLUGIN, LEGACY_CLAUDE_PLUGIN, LEGACY_AGENTS_PLUGIN):
         assert not os.path.lexists(target.joinpath(*parts))
     assert not os.path.lexists(target / ".codex")
     assert not os.path.lexists(target / ".claude")
@@ -250,7 +252,7 @@ def test_status_reports_present_on_installed(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert f"universal_installation_root = {tmp_path}" in proc.stdout.splitlines()
     assert f"plugin_installation_root = {tmp_path}" in proc.stdout.splitlines()
-    assert f"canonical_plugin_root = {tmp_path / 'conv'}" in proc.stdout.splitlines()
+    assert f"canonical_plugin_root = {tmp_path / 'conversate'}" in proc.stdout.splitlines()
     assert f"canonical_hook_root = {tmp_path / 'hooks'}" in proc.stdout.splitlines()
     assert f"conversation_database = {tmp_path / 'convs'}" in proc.stdout.splitlines()
     assert "plugin files: present" in proc.stdout
@@ -258,6 +260,7 @@ def test_status_reports_present_on_installed(tmp_path):
     assert "canonical plugin: present (9 skills)" in proc.stdout
     assert "legacy claude plugin .claude/skills/conv: absent" in proc.stdout
     assert "legacy agents plugin .agents/skills/conv: absent" in proc.stdout
+    assert "legacy canonical plugin conv: absent" in proc.stdout
 
 
 def test_status_reports_missing_on_empty(tmp_path):
@@ -273,14 +276,14 @@ def test_real_codex_and_claude_homes_get_entrypoints_and_hook_config(tmp_path):
     home = tmp_path / "home"
     codex_home = home / ".codex"
     claude_home = home / ".claude"
-    canonical_plugin = root / "conv"
+    canonical_plugin = root / "conversate"
     canonical_hooks = root / "hooks"
 
     proc = install_into(root, "--agents", "codex,claude", "--hooks", "codex,claude", home=home)
     assert proc.returncode == 0, proc.stderr + proc.stdout
 
-    codex_entrypoint = codex_home / "skills" / "conv"
-    claude_entrypoint = claude_home / "skills" / "conv"
+    codex_entrypoint = codex_home / "skills" / "conversate"
+    claude_entrypoint = claude_home / "skills" / "conversate"
     assert os.path.realpath(codex_entrypoint) == os.path.realpath(canonical_plugin)
     assert os.path.realpath(claude_entrypoint) == os.path.realpath(canonical_plugin)
     assert (codex_home / "hooks.json").is_file()
@@ -325,7 +328,7 @@ def test_status_reports_incomplete_canonical_payload_plugin_and_hooks(tmp_path):
     assert first.returncode == 0, first.stderr + first.stdout
 
     (root / "scripts" / "conv_cli.py").write_text("STALE RUNTIME\n", encoding="utf-8")
-    (root / "conv" / "skills" / "save" / "SKILL.md").unlink()
+    (root / "conversate" / "skills" / "save" / "SKILL.md").unlink()
     (root / "hooks" / "codex" / "conv_turn_counter.py").unlink()
 
     status = install_into(root, "--status")
@@ -344,8 +347,8 @@ def make_stale_nested_install_surfaces(root: Path, home: Path) -> None:
     shutil.copytree(root.joinpath(*CANONICAL_PLUGIN), stale_agents)
     shutil.copytree(root.joinpath(*CANONICAL_PLUGIN), stale_claude)
 
-    codex_entrypoint = home / ".codex" / "skills" / "conv"
-    claude_entrypoint = home / ".claude" / "skills" / "conv"
+    codex_entrypoint = home / ".codex" / "skills" / "conversate"
+    claude_entrypoint = home / ".claude" / "skills" / "conversate"
     install_mod._remove_dir_or_link(codex_entrypoint)
     install_mod._remove_dir_or_link(claude_entrypoint)
     install_mod._create_directory_entrypoint(codex_entrypoint, stale_agents)
@@ -409,15 +412,15 @@ def test_repair_migrates_stale_nested_copy_state_to_conversate_ssot(tmp_path):
     assert repaired.returncode == 0, repaired.stderr + repaired.stdout
     assert f"plugin_source = {REPO_ROOT.resolve()}" in repaired.stdout.splitlines()
     assert f"universal_installation_root = {root.resolve()}" in repaired.stdout.splitlines()
-    assert f"canonical_plugin_root = {(root / 'conv').resolve()}" in repaired.stdout.splitlines()
+    assert f"canonical_plugin_root = {(root / 'conversate').resolve()}" in repaired.stdout.splitlines()
     assert f"canonical_hook_root = {(root / 'hooks').resolve()}" in repaired.stdout.splitlines()
     assert "codex: hook command changed; Codex may require hook reapproval or retrust" in repaired.stdout
 
-    assert (root / "conv" / "SKILL.md").is_file()
+    assert (root / "conversate" / "SKILL.md").is_file()
     assert (root / "hooks" / "codex" / "conv_turn_counter.py").is_file()
     assert (root / "hooks" / "claude" / "conv-turn-counter.ps1").is_file()
-    assert os.path.realpath(home / ".codex" / "skills" / "conv") == os.path.realpath(root / "conv")
-    assert os.path.realpath(home / ".claude" / "skills" / "conv") == os.path.realpath(root / "conv")
+    assert os.path.realpath(home / ".codex" / "skills" / "conversate") == os.path.realpath(root / "conversate")
+    assert os.path.realpath(home / ".claude" / "skills" / "conversate") == os.path.realpath(root / "conversate")
     codex_hook = conversate_codex_hook(root, home=home)
     codex_command = codex_hook["command"] + codex_hook["commandWindows"]
     assert str(root / "hooks" / "codex" / "conv_turn_counter.py") in codex_command
@@ -460,7 +463,7 @@ def test_help_and_status_use_plugin_root_and_database_terms(tmp_path):
     assert status.returncode == 0, status.stderr + status.stdout
     assert f"universal_installation_root = {tmp_path}" in status.stdout.splitlines()
     assert f"plugin_installation_root = {tmp_path}" in status.stdout.splitlines()
-    assert f"canonical_plugin_root = {tmp_path / 'conv'}" in status.stdout.splitlines()
+    assert f"canonical_plugin_root = {tmp_path / 'conversate'}" in status.stdout.splitlines()
     assert f"canonical_hook_root = {tmp_path / 'hooks'}" in status.stdout.splitlines()
     assert f"conversation_database = {tmp_path / 'convs'}" in status.stdout.splitlines()
     assert "Conversation database:" in status.stdout
@@ -1010,6 +1013,94 @@ def test_claude_hook_uses_custom_target_and_replaces_owned_hook(tmp_path):
     assert sum(1 for entry in entries if "conv-turn-counter" in json.dumps(entry)) == 1
 
 
+def test_claude_hook_command_text_inspects_args_for_ownership():
+    # Regression: a command+args hook entry (the real-world stale form, e.g.
+    # {"command": "pwsh", "args": ["-File", "<worktree>/.claude/hooks/conv-turn-counter.ps1"]})
+    # must be recognized as Conversate-owned so repair/uninstall can replace or strip it.
+    args_entry = {
+        "type": "command",
+        "command": "pwsh",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                 "${CLAUDE_PROJECT_DIR}/.claude/hooks/conv-turn-counter.ps1"],
+    }
+    assert install_mod._is_our_hook(args_entry)
+    assert "conv-turn-counter.ps1" in install_mod._command_text(args_entry)
+    # Non-conversate args-form entry is NOT claimed as ours.
+    foreign = {"type": "command", "command": "pwsh", "args": ["-File", "other.ps1"]}
+    assert not install_mod._is_our_hook(foreign)
+
+
+def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_owned_hook(tmp_path):
+    # Regression for the reported bug: a project settings.json carrying a stale
+    # command+args Conversate hook (the real-world {command: "pwsh", args: [..., "-File",
+    # "<worktree>/.claude/hooks/conv-turn-counter.ps1"]} form) must be (1) recognized as
+    # ours by _hook_wired_claude so --repair with NO --hooks selects Claude for repair,
+    # and (2) rewritten to the canonical installed script path, preserving foreign hooks.
+    root = tmp_path / "Plugin installation root"
+    home = agent_home_for(root)
+    # Full install first so the canonical hook root + plugin exist for repair.
+    first = install_into(root, "--hooks", "claude", home=home)
+    assert first.returncode == 0, first.stderr + first.stdout
+
+    settings = claude_settings_path(root)
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "pwsh",
+                                    "args": [
+                                        "-NoProfile",
+                                        "-ExecutionPolicy",
+                                        "Bypass",
+                                        "-File",
+                                        "${CLAUDE_PROJECT_DIR}/.claude/hooks/conv-turn-counter.ps1",
+                                    ],
+                                    "timeout": 5,
+                                },
+                                {"type": "command", "command": "echo foreign"},
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # The args-form hook must be recognized as ours by _hook_wired_claude (the
+    # exact check _installed_hook_set delegates to for claude) so --repair with no
+    # --hooks selects Claude independent of the always-available source snippet.
+    # claude_home pins this to the test settings, not the real user surface.
+    ctx = install_mod.Ctx(source=REPO_ROOT, target=root, claude_home=home / ".claude")
+    assert install_mod._hook_wired_claude(ctx)
+
+    repaired = install_into(root, "--repair", home=home)
+    assert repaired.returncode == 0, repaired.stderr + repaired.stdout
+    assert "repair hooks:" in repaired.stdout
+    # The decisive guard is below: the stale args-form entry must be gone
+    # post-repair (proves _replace_our_hook_events matched the args form).
+
+    text = settings.read_text(encoding="utf-8")
+    # The stale worktree-local path is gone entirely.
+    assert "${CLAUDE_PROJECT_DIR}" not in text
+    assert ".claude/hooks/conv-turn-counter.ps1" not in text
+    # A foreign hook in the same group is preserved.
+    assert "echo foreign" in text
+    entries = claude_hook_entries(root, home=home)
+    # Exactly one Conversate entry remains, now in canonical command-string form.
+    owned = [entry for entry in entries if "conv-turn-counter" in json.dumps(entry)]
+    assert len(owned) == 1
+    script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
+    assert str(script) in owned[0]["command"]
+    # The rewritten entry no longer carries a stale args list.
+    assert "args" not in owned[0]
+
+
 def test_python3_resolver_verifies_candidates_before_returning():
     resolved = install_mod._resolve_python3_command(
         candidates=[("python3",), ("python",)],
@@ -1274,15 +1365,15 @@ def test_fresh_install_registers_conv_plugin_with_nine_skills(tmp_path):
     assert manifest.is_file(), f"conv plugin manifest not at {manifest}"
     assert codex_manifest.is_file(), f"Codex plugin manifest not at {codex_manifest}"
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    assert data["name"] == "conv"
+    assert data["name"] == "conversate"
     assert data.get("x-installed-by") == "conversate"
     codex_data = json.loads(codex_manifest.read_text(encoding="utf-8"))
-    assert codex_data["name"] == "conv"
+    assert codex_data["name"] == "conversate"
     assert codex_data["skills"] == "./skills/"
     codex_text = json.dumps(codex_data)
     for skill in CONV_SKILLS:
         if skill != "conversate":
-            assert f"conv:{skill}" in codex_text
+            assert f"conversate:{skill}" in codex_text
     for skill in CONV_SKILLS:
         skill_md = plugin_root / "skills" / skill / "SKILL.md"
         assert skill_md.is_file(), f"missing skill {skill!r} at {skill_md}"
@@ -1356,9 +1447,9 @@ def test_foreign_conv_plugin_refused_then_force_recovers(tmp_path):
     assert forced.returncode == 0, forced.stderr + forced.stdout
     backups = [
         p.name for p in tmp_path.iterdir()
-        if p.name.startswith("conv.bak")
+        if p.name.startswith("conversate.bak")
     ]
-    assert "conv.bak-1" in backups
+    assert "conversate.bak-1" in backups
     data = json.loads(foreign_manifest.read_text(encoding="utf-8"))
     assert data.get("x-installed-by") == "conversate"
 
@@ -1370,6 +1461,84 @@ def test_dry_run_leaves_no_conv_plugin(tmp_path):
     assert not os.path.lexists(tmp_path.joinpath(*CANONICAL_PLUGIN))
     assert not os.path.lexists(tmp_path.joinpath(*LEGACY_CLAUDE_PLUGIN))
     assert not os.path.lexists(tmp_path.joinpath(*LEGACY_AGENTS_PLUGIN))
+
+# --- canonical install-root migration (conv -> conversate) -------------------
+
+
+def test_reinstall_migrates_legacy_canonical_conv_root_to_conversate(tmp_path):
+    # An old install kept the plugin at <root>/conv. Re-running the installer must
+    # install the canonical root at <root>/conversate and remove the legacy <root>/conv
+    # (only when conversate-owned) so both install roots never coexist.
+    assert install_into(tmp_path).returncode == 0
+    conversate = tmp_path.joinpath(*CANONICAL_PLUGIN)
+    legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
+    shutil.copytree(conversate, legacy)
+    shutil.rmtree(conversate)
+
+    migrated = install_into(tmp_path)
+    assert migrated.returncode == 0, migrated.stderr + migrated.stdout
+    assert conversate.is_dir()
+    assert not os.path.lexists(legacy)
+    assert "legacy canonical plugin: removed" in migrated.stdout
+    assert_installed(tmp_path)
+
+
+def test_reinstall_leaves_foreign_legacy_conv_root_alongside_conversate(tmp_path):
+    # A foreign <root>/conv (no conversate manifest) is not ours and must be left
+    # untouched while the canonical root still installs at <root>/conversate.
+    assert install_into(tmp_path).returncode == 0
+    legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
+    legacy.mkdir()
+    (legacy / "foreign.txt").write_text("not ours\n", encoding="utf-8")
+
+    second = install_into(tmp_path)
+    assert second.returncode == 0, second.stderr + second.stdout
+    assert (legacy / "foreign.txt").read_text(encoding="utf-8") == "not ours\n"
+    assert tmp_path.joinpath(*CANONICAL_PLUGIN).is_dir()
+    assert "legacy canonical plugin: conv not conversate-owned; leaving as-is" in second.stdout
+
+
+def test_uninstall_removes_legacy_canonical_conv_root(tmp_path):
+    assert install_into(tmp_path).returncode == 0
+    legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
+    shutil.copytree(tmp_path.joinpath(*CANONICAL_PLUGIN), legacy)
+
+    un = install_into(tmp_path, "--uninstall")
+    assert un.returncode == 0, un.stderr + un.stdout
+    assert not os.path.lexists(legacy)
+    assert not os.path.lexists(tmp_path.joinpath(*CANONICAL_PLUGIN))
+    # Conversation database survives uninstall.
+    assert (tmp_path / "convs").is_dir()
+
+
+def test_status_reports_legacy_canonical_conv_root_as_stale_copy(tmp_path):
+    assert install_into(tmp_path).returncode == 0
+    legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
+    shutil.copytree(tmp_path.joinpath(*CANONICAL_PLUGIN), legacy)
+
+    status = install_into(tmp_path, "--status")
+    assert status.returncode == 0, status.stderr + status.stdout
+    assert "legacy canonical plugin conv: stale installer-owned copy (9 skills)" in status.stdout
+
+
+def test_inplace_repair_migrates_legacy_conv_root_to_conversate(tmp_path):
+    # In-place repair (source == target) of a legacy install: the new canonical root
+    # does not exist yet, so the repair reads the legacy <root>/conv as its source
+    # (only when conversate-owned) and migrates it into <root>/conversate.
+    assert install_into(tmp_path).returncode == 0
+    conversate = tmp_path.joinpath(*CANONICAL_PLUGIN)
+    legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
+    shutil.copytree(conversate, legacy)
+    shutil.rmtree(conversate)
+
+    home = agent_home_for(tmp_path)
+    repaired = run_install(
+        ["--source", str(tmp_path), "--target", str(tmp_path), "--repair"],
+        env=clean_env(home=home),
+    )
+    assert repaired.returncode == 0, repaired.stderr + repaired.stdout
+    assert conversate.is_dir()
+    assert not os.path.lexists(legacy)
 
 # --- claude-plugin-only mode --------------------------------------------------
 
@@ -1386,7 +1555,7 @@ def test_claude_plugin_only_installs_plugin_without_store_or_skill_link(tmp_path
     assert manifest.is_file(), f"conv plugin manifest not at {manifest}"
     assert codex_manifest.is_file(), f"Codex plugin manifest not at {codex_manifest}"
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    assert data["name"] == "conv"
+    assert data["name"] == "conversate"
     assert data.get("x-installed-by") == "conversate"
     for skill in CONV_SKILLS:
         skill_md = plugin_root / "skills" / skill / "SKILL.md"

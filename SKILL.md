@@ -1,11 +1,11 @@
 ---
-name: conv
-description: Plugin entrypoint for the conversate skill group. Use for conversation persistence tasks such as save this, checkpoint this, resume the auth discussion, list open conversations, park this, sidekick this, return from a branch, continue fresh, or repair/regenerate the Conversation database.
+name: conversate
+description: Plugin entrypoint for the Conversate skill group. Use for conversation persistence tasks such as save this, checkpoint this, resume the auth discussion, list open conversations, park this, sidekick this, return from a branch, continue fresh, or repair/regenerate the Conversation database.
 ---
 
-# conv plugin
+# Conversate plugin
 
-Use this plugin entrypoint when the user asks for a conversate action but did not name
+Use this plugin entrypoint when the user asks for a Conversate action but did not name
 one of the narrower verb skills. A record is not a transcript: it is a distilled,
 resumable artifact any agent can pick up cold. Plugin source is this repo. Installed
 plugin files live under the Plugin installation root, `~/.conversate/` by default.
@@ -36,12 +36,12 @@ is the source of truth for every harness (Claude Code, pi, oh-my-pi, and Codex).
 
 ## Routing
 
-- For `conv:save`, auto-save reminders, "save this", or "checkpoint this", read `~/.conversate/references/save.md`.
-- For `conv:resume` or "continue where we left off", read `~/.conversate/references/resume.md`.
-- For `conv:list`, "what's open", or recent/open conversation lists, read `~/.conversate/references/list.md`.
-- For `conv:park`, read `~/.conversate/references/save.md` and save with status `parked`.
-- For `conv:sidekick`, `conv:return`, or `conv:continue`, read `~/.conversate/references/branching.md`.
-- For `conv:regen`, drift checks, CLI details, or implementation troubleshooting, read `~/.conversate/references/cli.md`.
+- For `conversate:save`, auto-save reminders, "save this", or "checkpoint this", read `~/.conversate/references/save.md`.
+- For `conversate:resume` or "continue where we left off", read `~/.conversate/references/resume.md`.
+- For `conversate:list`, "what's open", or recent/open conversation lists, read `~/.conversate/references/list.md`.
+- For `conversate:park`, read `~/.conversate/references/save.md` and save with status `parked`.
+- For `conversate:sidekick`, `conversate:return`, or `conversate:continue`, read `~/.conversate/references/branching.md`.
+- For `conversate:regen`, drift checks, CLI details, or implementation troubleshooting, read `~/.conversate/references/cli.md`.
 
 ## Runtime Paths
 
@@ -51,11 +51,14 @@ Normal operation uses the installed CLI under the Plugin installation root:
 
 ## Auto-Save Behavior
 
-If the harness injects a `CONV AUTO-SAVE: threshold reached` reminder (via hooks), honor
-it: run the `conv:save` flow silently, infer the id and topic, write the checkpoint,
-rebuild the index, and tell the user only:
+If the harness injects a `CONVERSATE AUTO-SAVE: threshold reached` reminder (via hooks),
+honor it: run the `conversate:save` flow silently, infer the id and topic, write the
+checkpoint, rebuild the index, and tell the user only:
 
 `Auto-saved as <id> - rename anytime.`
+
+The current marker is `CONVERSATE AUTO-SAVE`; older hooks emitted `CONV AUTO-SAVE`. Treat
+either form as the same reminder for backward compatibility.
 
 In harnesses without hooks, self-trigger the same save at natural milestones, on topic
 shifts, and before the session ends. Do not block the user's current task for

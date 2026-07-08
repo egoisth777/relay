@@ -1,10 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
- * conversate auto-save turn counter (pi / oh-my-pi extension).
+ * Conversate auto-save turn counter (pi / oh-my-pi extension).
  *
  * Counts user prompts within a session and, on every Nth prompt, injects a
- * reminder to persist conversation state via the conv plugin. `content`
+ * reminder to persist conversation state via the Conversate plugin. `content`
  * is what reaches the LLM; `display` surfaces it in the TUI as well.
  *
  * API reference (verified against pi-mono docs/extensions.md):
@@ -22,8 +22,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const TURN_THRESHOLD = 10;
 
 const REMINDER =
-  "CONV AUTO-SAVE: threshold reached - run conv:save via the " +
-  "conv plugin, then continue.";
+  "CONVERSATE AUTO-SAVE: threshold reached - run /conversate:save via the " +
+  "Conversate plugin, then continue.";
 
 export default function (pi: ExtensionAPI) {
   // Per-session count of user prompts. The extension instance lives for the

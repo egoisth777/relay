@@ -1,7 +1,7 @@
 {
-  "name": "conv",
+  "name": "conversate",
   "version": "0.1.0",
-  "description": "Plugin-owned skills for the conversate conversation recorder: save, resume, list, park, sidekick, return, continue, and regen topic-bound records in the Conversation database.",
+  "description": "Plugin-owned skills for the Conversate conversation recorder: save, resume, list, park, sidekick, return, continue, and regen topic-bound records in the Conversation database.",
   "author": {
     "name": "conversate"
   },
@@ -9,16 +9,16 @@
   "keywords": ["conversation", "memory", "checkpoint", "resume"],
   "skills": "./skills/",
   "interface": {
-    "displayName": "conversate",
+    "displayName": "Conversate",
     "shortDescription": "Save and resume distilled agent conversations.",
-    "longDescription": "conversate stores topic-bound conversations as distilled, resumable records in the Conversation database. Codex exposes the same conv verb inventory as the shipped skills: conv:save, conv:resume, conv:list, conv:park, conv:sidekick, conv:return, conv:continue, and conv:regen.",
+    "longDescription": "Conversate stores topic-bound conversations as distilled, resumable records in the Conversation database. Codex exposes the same conversate verb inventory as the shipped skills: /conversate:save, /conversate:resume, /conversate:list, /conversate:park, /conversate:sidekick, /conversate:return, /conversate:continue, and /conversate:regen.",
     "developerName": "conversate",
     "category": "Productivity",
     "capabilities": ["Write"],
     "defaultPrompt": [
-      "Run conv:save for this checkpoint.",
-      "Run conv:resume on the auth discussion.",
-      "Run conv:list for open conversations."
+      "Run /conversate:save for this checkpoint.",
+      "Run /conversate:resume on the auth discussion.",
+      "Run /conversate:list for open conversations."
     ]
   }
 }

@@ -1,6 +1,6 @@
-# conversate
+# Conversate
 
-conversate is an **agent-agnostic conversation recorder**. It persists topic-bound
+Conversate is an **agent-agnostic conversation recorder**. It persists topic-bound
 conversations as distilled, resumable records — not transcripts — so that headspace
 survives across sessions, context windows, and even across different agents.
 
@@ -12,14 +12,14 @@ agent) can pick the thread back up without replaying the chat.
 
 Plugin source is this repo. The universal installation root (the installer `--target`,
 also reported as the Plugin installation root) defaults to `~/.conversate/`. The
-canonical installed plugin root is `~/.conversate/conv/`; the canonical hook root is
+canonical installed plugin root is `~/.conversate/conversate/`; the prior `~/.conversate/conv/` is a legacy root the installer migrates from and removes on reinstall. The canonical hook root is
 `~/.conversate/hooks/`. The Conversation database is `~/.conversate/convs/` and is the
 source of truth for saved conversation records:
 
 ```
 ~/.conversate/
 ├── .gitignore      # ignores derived artifacts; records stay trackable
-├── conv/           # canonical installed conv plugin root
+├── conversate/     # canonical installed Conversate plugin root (legacy: conv/)
 │   ├── SKILL.md
 │   ├── .claude-plugin/
 │   ├── .codex-plugin/
@@ -49,7 +49,7 @@ nested legacy source tree — every component ships from the root.
 │   └── marketplace.json         # single-plugin marketplace (source ".")
 ├── .codex-plugin/
 │   └── plugin.json              # Codex manifest
-├── SKILL.md                     # plugin entrypoint (name: conv)
+├── SKILL.md                     # plugin entrypoint (name: conversate)
 ├── skills/
 │   ├── conversate/SKILL.md      # base skill (name: conversate)
 │   └── {save,resume,list,park,sidekick,return,continue,regen}/SKILL.md  # eight verb skills
@@ -65,7 +65,7 @@ nested legacy source tree — every component ships from the root.
 
 ### Native plugin install vs `install.py`
 
-`conv` can be added as a **native Claude Code marketplace plugin** via
+Conversate can be added as a **native Claude Code marketplace plugin** via
 `.claude-plugin/marketplace.json` (a single-plugin marketplace whose source is
 `.`). A native install registers the **skills only**: it does not wire the
 auto-save turn-counter hooks, and it does not create the installed CLI or the
@@ -78,24 +78,24 @@ plugin root. `scripts/install.py` is what wires the per-host hook scripts
 (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.pi/agent/extensions/`,
 `<target>/.omp/hooks/pre/`) and provisions the CLI + Conversation database the
 hooks depend on. This is a deliberate deviation from the superpowers plugin
-convention: conversate's hooks must resolve to a real installation root, so they
+convention: Conversate's hooks must resolve to a real installation root, so they
 are bound by the installer rather than by the plugin loader. See
 `hooks/README.md` for the per-host wiring details.
 
 ## Supported agents
 
-conversate is packaged as a plugin named `conv` with a group of skills backed by one
-shared Conversation database. The plugin skill group is installed once at
-`~/.conversate/conv/`. Each real agent config surface, such as `~/.codex/` or
+Conversate is packaged as a plugin whose identifier is `conversate`, with a group of skills backed by one
+shared Conversation database. The Conversate plugin skill group is installed once at
+`~/.conversate/conversate/`. Each real agent config surface, such as `~/.codex/` or
 `~/.claude/`, holds scan entrypoints or hook config that point back to
-`~/.conversate/conv/` and `~/.conversate/hooks/`. Every skill delegates writes to the
+`~/.conversate/conversate/` and `~/.conversate/hooks/`. Every skill delegates writes to the
 installed CLI:
 `python ~/.conversate/scripts/conv_cli.py`.
 
 ## Installation
 
-conversate installs runtime files under the universal installation root, installs the
-`conv` plugin skill group at the canonical installed plugin root, and installs hook
+Conversate installs runtime files under the universal installation root, installs the
+Conversate plugin skill group (identifier `conversate`) at the canonical installed plugin root, and installs hook
 implementations at the canonical hook root. From Plugin source:
 
     python scripts/install.py
@@ -106,10 +106,10 @@ roots:
 
 | Runtime surface | Role |
 |-----------------|------|
-| `~/.conversate/conv/` | Canonical installed plugin root |
+| `~/.conversate/conversate/` | Canonical installed plugin root |
 | `~/.conversate/hooks/` | Canonical hook root |
-| `~/.codex/skills/conv` | Codex scan entrypoint resolving to the canonical plugin |
-| `~/.claude/skills/conv` | Claude Code scan entrypoint resolving to the canonical plugin |
+| `~/.codex/skills/conversate` | Codex scan entrypoint resolving to the canonical plugin |
+| `~/.claude/skills/conversate` | Claude Code scan entrypoint resolving to the canonical plugin |
 | `~/.codex/hooks.json` | Codex hook config pointing to the canonical hook root |
 | `~/.claude/settings.json` | Claude hook config pointing to the canonical hook root |
 | `~/.pi/agent/extensions/conv-turn-counter.ts` | pi extension hook pointing to the canonical hook implementation |
@@ -126,7 +126,7 @@ installation root.
           [--update] [--repair|--doctor-fix] [--force] [--uninstall] [--status] [--dry-run]
 
 - `--target` - explicit Plugin installation root; default is `~/.conversate/`.
-- `--agents` (default `all`) - which real agent scan surfaces receive entrypoints to the canonical `conv` plugin.
+- `--agents` (default `all`) - which real agent scan surfaces receive entrypoints to the canonical Conversate plugin (`conversate`).
 - `--hooks` (default `none`) - install per-agent auto-save turn-counter hooks (see `hooks/README.md`); without it the installer prints wiring instructions.
 - `--update` - refresh canonical plugin and hook files in place and remove stale installer-owned artifacts; never touches `convs/`, `index.jsonl`, or `.semble/`.
 - `--repair` / `--doctor-fix` - explicit lifecycle repair path. It refreshes installer-owned plugin files, prunes stale/cache artifacts, initializes missing lifecycle files, and rewires selected hooks. With no `--hooks`, it rewrites already-wired hooks; pass `--hooks codex` or `--hooks all` to restore missing hook wiring.
@@ -135,21 +135,21 @@ installation root.
 - `--uninstall` - remove installer-owned plugin entrypoints, legacy installer-created skill links, and installer-wired hooks. The Conversation database under `~/.conversate/convs/` is never touched.
 - `--dry-run` - print planned actions, change nothing.
 
-Re-running is idempotent. The installer refuses to install into the conversate
+Re-running is idempotent. The installer refuses to install into the Conversate
 checkout itself unless you pass an explicit `--target`.
 
 ## Plugin skills
 
-The installer registers the same `conv` plugin skill group for Claude Code, pi,
+The installer registers the same Conversate plugin skill group (identifier `conversate`) for Claude Code, pi,
 oh-my-pi, and Codex. Codex metadata points at the same `./skills/` directory and
 names the same visible verb inventory. The verb skills are thin wrappers that delegate to the shared
 Conversation database and the installed `~/.conversate/references/*.md` playbooks:
-`conv:save`, `conv:resume`, `conv:list`, `conv:park`, `conv:sidekick`,
-`conv:return`, `conv:continue`, and `conv:regen`.
+`/conversate:save`, `/conversate:resume`, `/conversate:list`, `/conversate:park`, `/conversate:sidekick`,
+`/conversate:return`, `/conversate:continue`, and `/conversate:regen`.
 
 Claude Code must be launched from the project root for a project-scope plugin copy, and
-after install you must run `/reload-plugins` (or restart Claude Code) before the `conv`
-skills appear. Project `@skills-dir` plugins do not walk up from subdirectories.
+after install you must run `/reload-plugins` (or restart Claude Code) before the Conversate
+skills (the `/conversate:*` commands) appear. Project `@skills-dir` plugins do not walk up from subdirectories.
 
 ## Record format
 

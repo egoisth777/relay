@@ -5,7 +5,7 @@ disable-model-invocation: false
 argument-hint: "[parent] [topic]"
 ---
 
-Run the conversate `conv:continue` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
+Run the Conversate `conversate:continue` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
 
 Do not load broad instructions for the common path; this file is enough to continue a normal conversation in a fresh record.
 
@@ -23,7 +23,7 @@ Do not load broad instructions for the common path; this file is enough to conti
 
 - Treat `~/.conversate/convs/*.md` as source of truth and `~/.conversate/index.jsonl` as a derived cache.
 - Do not hand-edit records or build continuation refs yourself for the common path; the continue primitive parks the parent, creates the child, carries recovery sections, reconciles refs, and rebuilds the index.
-- Use `conv:sidekick` instead when the user wants a side exploration rather than the same topic in a clean record.
+- Use `conversate:sidekick` instead when the user wants a side exploration rather than the same topic in a clean record.
 
 ## Lazy References
 

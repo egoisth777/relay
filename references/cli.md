@@ -1,4 +1,4 @@
-# conv CLI
+# Conversate CLI
 
 The shared helper is:
 
@@ -16,7 +16,7 @@ The default Plugin installation root is `~/.conversate/`. The Conversation datab
 ```
 ~/.conversate/
 ├── .gitignore      # ignores .semble/, index.jsonl, __pycache__/ (records stay trackable)
-├── conv/           # canonical installed conv plugin root
+├── conv/           # canonical installed Conversate plugin root (legacy runtime dir name)
 ├── convs/          # Conversation database: *.md records, source of truth
 │   └── YYYY-MM-DD_<slug>.md
 ├── index.jsonl     # derived cache, one conversation record per line
@@ -105,7 +105,7 @@ path is available, the CLI falls back to local body scoring and labels those hit
     "goal": "one-line goal",
     "next_steps": ["..."],
     "open_questions": ["..."],
-    "suggested_skills": ["conv:resume"]
+    "suggested_skills": ["conversate:resume"]
   },
   "user_instructions": ["standing directive", "..."],
   "condensed_transcript": [

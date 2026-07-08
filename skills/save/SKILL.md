@@ -5,7 +5,7 @@ disable-model-invocation: false
 argument-hint: "[id-or-topic]"
 ---
 
-Run the conversate `conv:save` flow for this conversation. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
+Run the Conversate `conversate:save` flow for this conversation. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
 
 Do not load broad instructions for the common path; this file is enough to save a normal checkpoint.
 
@@ -55,7 +55,7 @@ Do not load broad instructions for the common path; this file is enough to save 
     "goal": "Ship the redesigned engine and docs.",
     "next_steps": ["update tests", "rewrite SKILL.md"],
     "open_questions": ["how do adapters register hooks?"],
-    "suggested_skills": ["conv:save", "conv:resume"]
+    "suggested_skills": ["conversate:save", "conversate:resume"]
   },
   "user_instructions": ["use PowerShell on Windows"],
   "condensed_transcript": [
@@ -66,6 +66,6 @@ Do not load broad instructions for the common path; this file is enough to save 
 
 ## Lazy References
 
-Only after the common path needs branch or advanced behavior, read `~/.conversate/references/save.md`. Examples: explicit branch ref labels, parking through `conv:park`, or schema detail not covered above.
+Only after the common path needs branch or advanced behavior, read `~/.conversate/references/save.md`. Examples: explicit branch ref labels, parking through `conversate:park`, or schema detail not covered above.
 
 $ARGUMENTS

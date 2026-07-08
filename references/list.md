@@ -1,6 +1,6 @@
-# conv list
+# Conversate list
 
-Use this for `conv:list`, "what's open", and recent conversation requests.
+Use this for `conversate:list`, "what's open", and recent conversation requests.
 
 ## Commands
 

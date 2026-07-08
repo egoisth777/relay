@@ -1,6 +1,6 @@
-# conv branching
+# Conversate branching
 
-Use this only after the direct `conv:sidekick`, `conv:return`, or `conv:continue`
+Use this only after the direct `conversate:sidekick`, `conversate:return`, or `conversate:continue`
 common path needs advanced branch behavior. The common path is the deterministic CLI
 primitive for each action; do not hand-build refs or statuses for normal branch work.
 

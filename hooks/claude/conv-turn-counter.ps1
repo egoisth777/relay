@@ -1,11 +1,11 @@
 #!/usr/bin/env pwsh
-# conversate turn counter - Claude Code UserPromptSubmit hook.
+# Conversate turn counter - Claude Code UserPromptSubmit hook.
 #
 # Reads the hook's stdin JSON (which carries `session_id`), keeps a per-session counter
 # file in the OS temp directory keyed by a hash of that session id, and increments it once
 # per user prompt. Once the count reaches 10 (and every 10 prompts after) it prints a
-# CONV AUTO-SAVE reminder on stdout; Claude Code injects UserPromptSubmit stdout into the
-# agent's context, so the conv skill sees it and runs a silent save.
+# CONVERSATE AUTO-SAVE reminder on stdout; Claude Code injects UserPromptSubmit stdout
+# agent's context, so the Conversate skill sees it and runs a silent save.
 #
 # Dependency-free. Keyed by session_id (not PID) so parallel/reused shells stay distinct.
 # Safe to wire user-level: missing installed Conversation database is a fast, silent no-op.
@@ -47,7 +47,7 @@ try {
     Set-Content -LiteralPath $counterFile -Value $count -Encoding ascii
 
     if ($count -ge 10 -and ($count % 10) -eq 0) {
-        Write-Output "CONV AUTO-SAVE: threshold reached - run conv:save via the conv plugin, then continue."
+        Write-Output "CONVERSATE AUTO-SAVE: threshold reached - run /conversate:save via the Conversate plugin, then continue."
     }
 } catch {
     # never break the user's prompt on a counter error

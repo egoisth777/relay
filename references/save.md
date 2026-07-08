@@ -1,6 +1,6 @@
-# conv save and park
+# Conversate save and park
 
-Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language checkpoint requests.
+Use this for `conversate:save`, `conversate:park`, auto-save reminders, and natural-language checkpoint requests.
 
 ## Steps
 
@@ -21,7 +21,7 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
      keeping, and only settled decisions with reasoning.
 4. Write the conversation JSON (shape below) and pipe it to:
    `python ~/.conversate/scripts/conv_cli.py upsert --stdin`
-   Use `--status parked` for `conv:park`.
+   Use `--status parked` for `conversate:park`.
 5. The CLI writes the TOML markdown, always renders the resumption sections (empty ones
    become `(none)`), reconciles reverse refs, and rebuilds `index.jsonl`.
 6. For manual saves, present the inferred id/topic and invite rename. For auto-save, only
@@ -48,7 +48,7 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
     "summary": "One line describing what this conversation is.",
     "dict": "- **term** - agreed meaning.",
     "qa": "- **Q:** question? **A:** answer.\n- **Q (open):** unresolved question?",
-    "sources": "- file: path/to/file\n- skill: conv",
+    "sources": "- file: path/to/file\n- skill: conversate",
     "insights": "- Useful realization.",
     "decisions": "1. Decision and reasoning."
   },
@@ -56,7 +56,7 @@ Use this for `conv:save`, `conv:park`, auto-save reminders, and natural-language
     "goal": "Ship the redesigned engine and docs.",
     "next_steps": ["update tests", "rewrite SKILL.md"],
     "open_questions": ["how do pi/codex adapters register hooks?"],
-    "suggested_skills": ["conv:save", "conv:resume"]
+    "suggested_skills": ["conversate:save", "conversate:resume"]
   },
   "user_instructions": ["use PowerShell on Windows", "never git commit without asking"],
   "condensed_transcript": [

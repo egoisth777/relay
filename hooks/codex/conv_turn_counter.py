@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""conversate auto-save turn counter (Codex CLI UserPromptSubmit hook).
+"""Conversate auto-save turn counter (Codex CLI UserPromptSubmit hook).
 
 Codex invokes this on every user prompt, passing the hook input as JSON on
 stdin (fields include session_id, transcript_path, cwd, hook_event_name, model,
@@ -29,8 +29,8 @@ from pathlib import Path
 TURN_THRESHOLD = 10
 
 REMINDER = (
-    "CONV AUTO-SAVE: threshold reached - run conv:save via the "
-    "conv plugin, then continue."
+    "CONVERSATE AUTO-SAVE: threshold reached - run /conversate:save via the "
+    "Conversate plugin, then continue."
 )
 
 _COUNTER_PREFIX = "conversate-codex-turns-"

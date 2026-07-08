@@ -1,6 +1,6 @@
-# conversate hooks
+# Conversate hooks
 
-Optional per-harness hooks that inject `CONV AUTO-SAVE` reminders so the `conv` plugin
+Optional per-harness hooks that inject `CONVERSATE AUTO-SAVE` reminders so the Conversate plugin
 checkpoints long sessions automatically. Hooks are an installer concern; the plugin
 works without them (in a harness with no hooks it self-triggers saves at milestones).
 
@@ -8,7 +8,7 @@ works without them (in a harness with no hooks it self-triggers saves at milesto
 
 These hooks are **installer-managed and per-host**. There is deliberately no
 `hooks/hooks.json` that Claude Code would auto-load via `${CLAUDE_PLUGIN_ROOT}`
-at the plugin root, so adding `conv` as a native marketplace plugin registers
+at the plugin root, so adding Conversate as a native marketplace plugin registers
 the **skills only** — it does not activate auto-save. `scripts/install.py` is
 what wires each host's hook script into that host's own config surface:
 
@@ -26,7 +26,7 @@ deviation from the superpowers plugin convention.
 ## Internal repair mirror
 
 `scripts/install.py` also plants a copy of this hook tree at
-`<install-root>/conv/hooks/`, alongside the canonical `<install-root>/hooks/`.
+`<install-root>/conversate/hooks/`, alongside the canonical `<install-root>/hooks/`.
 It is an internal, generated mirror — not a second hook surface and not something
 any host is wired to — kept as the pristine source so `install.py --doctor-fix`
 can self-heal a corrupted or stale canonical `<install-root>/hooks/` when
@@ -38,8 +38,8 @@ installed mirror.
 
 - `conv-turn-counter.ps1` — a Claude Code **UserPromptSubmit** hook. It keeps a
   per-session prompt counter in the OS temp directory (keyed by `session_id`) and, once
-  the count reaches 10 and every 10 after, prints a `CONV AUTO-SAVE` reminder to run
-  `conv:save` through the conv plugin.
+  the count reaches 10 and every 10 after, prints a `CONVERSATE AUTO-SAVE` reminder to run
+  `/conversate:save` through the Conversate plugin.
   Claude Code injects UserPromptSubmit stdout into context, so the skill sees the reminder
   and runs a silent save.
 - `settings-snippet.json` — the hook registration block for the real Claude config
@@ -51,7 +51,7 @@ installed mirror.
 
 `hooks/pi/conv-turn-counter.ts` is a pi extension (default-export factory receiving
 `ExtensionAPI`). It counts user prompts via `before_agent_start` and every 10th turn
-injects a reminder to run `conv:save` through the conv plugin. Install into a Plugin
+injects a reminder to run `/conversate:save` through the Conversate plugin. Install into a Plugin
 installation root with:
 
     python scripts/install.py --target <plugin-root> --hooks pi

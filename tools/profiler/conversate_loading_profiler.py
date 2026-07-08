@@ -339,7 +339,7 @@ def conversation_payload(i: int, *, ref_previous: bool = False) -> str:
             "goal": "measure conversate latency gates",
             "next_steps": ["collect timings", "compare budgets"],
             "open_questions": [],
-            "suggested_skills": ["conv:save"],
+            "suggested_skills": ["conversate:save"],
         },
         "user_instructions": ["do not mutate the real conversation database"],
         "condensed_transcript": [

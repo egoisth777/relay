@@ -5,7 +5,7 @@ disable-model-invocation: false
 argument-hint: "[id-or-query]"
 ---
 
-Run the conversate `conv:resume` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and reads records from the Conversation database (`~/.conversate/convs/`).
+Run the Conversate `conversate:resume` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and reads records from the Conversation database (`~/.conversate/convs/`).
 
 Do not load broad instructions for the common path; this file is enough to resolve and resume a normal record.
 

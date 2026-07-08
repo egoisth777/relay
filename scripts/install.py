@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""conversate cross-agent installer.
+"""Conversate cross-agent installer.
 
-Installs conversate runtime files into the universal installation root, creates the
-Conversation database, installs the `conv` plugin skill group at the canonical
+Installs Conversate runtime files into the universal installation root, creates the
+Conversation database, installs the Conversate plugin skill group at the canonical
 installed plugin root, and writes scan entrypoints in real agent config surfaces:
 
-  ~/.claude/skills/conv (Claude Code)
-  ~/.codex/skills/conv  (Codex)
+  ~/.claude/skills/conversate (Claude Code)
+  ~/.codex/skills/conversate  (Codex)
 
 Stdlib only. Conversation records under `convs/` are never deleted or overwritten
 by any flag.
@@ -38,8 +38,8 @@ COPY_MARKER = ".conversate-installed-copy"
 PAYLOAD_FILES = ("LICENSE", "scripts/conv_cli.py", "scripts/install.py")
 PAYLOAD_DIRS = ("references",)
 # Universal-root SKILL.md keeps frontmatter `name: conversate`, so it is sourced
-# from the base skill, NOT the root plugin entrypoint SKILL.md (which is name: conv
-# and is consumed by the plugin walk -> <T>/conv/SKILL.md). src relpath -> dst relpath.
+# from the base skill, NOT the root plugin entrypoint SKILL.md (which is name: conversate
+# and is consumed by the plugin walk -> <T>/conversate/SKILL.md). src relpath -> dst relpath.
 PAYLOAD_FILE_MAP = {("skills", "conversate", "SKILL.md"): ("SKILL.md",)}
 HOOK_SOURCE_DIR = "hooks"
 IGNORE_DIR_NAMES = {"__pycache__", ".git", ".semble", "convs", ".arca"}
@@ -52,10 +52,18 @@ AGENTS_DIR_CONSUMERS = {"pi", "omp", "codex"}
 
 LEGACY_CLAUDE_LINK = (".claude", "skills", "conversate")
 LEGACY_AGENTS_LINK = (".agents", "skills", "conversate")
-CANONICAL_PLUGIN_DEST = ("conv",)
+CANONICAL_PLUGIN_DEST = ("conversate",)
+# Prior canonical installed plugin root (<target>/conv). Superseded by
+# CANONICAL_PLUGIN_DEST (<target>/conversate); migrated/removed on
+# install/update/repair/uninstall so both install roots do not coexist.
+LEGACY_CANONICAL_PLUGIN_DEST = ("conv",)
 LEGACY_CLAUDE_PLUGIN_DEST = (".claude", "skills", "conv")
 LEGACY_AGENTS_PLUGIN_DEST = (".agents", "skills", "conv")
-AGENT_SKILL_ENTRYPOINT = ("skills", "conv")
+AGENT_SKILL_ENTRYPOINT = ("skills", "conversate")
+# Prior-namespace real-home scan entrypoints (skills/conv under each agent's own
+# config surface). Superseded by AGENT_SKILL_ENTRYPOINT; migrated/removed on
+# install/update/repair/uninstall so both visible namespaces do not coexist.
+LEGACY_AGENT_SKILL_ENTRYPOINT = ("skills", "conv")
 
 # Hook install destinations (relative to target).
 # pi's current user-level extension surface is ~/.pi/agent/extensions/.
@@ -64,11 +72,11 @@ OMP_HOOK_DEST = (".omp", "hooks", "pre", "conv-turn-counter.ts")
 CODEX_HOOKS_JSON = (".codex", "hooks.json")
 CLAUDE_SETTINGS = (".claude", "settings.json")
 
-# Shared `conv` plugin skill group. The plugin root IS the repo root
+# Shared Conversate plugin skill group. The plugin root IS the repo root
 # (repo root == plugin root), so the source is ctx.source itself. Only these named
 # components are copied into the installed plugin root — never an rglob of the whole
 # checkout (which would sweep scripts/tests/tools/references/README/LICENSE). `hooks`
-# is included deliberately: it plants a pristine <T>/conv/hooks mirror alongside the
+# is included deliberately: it plants a pristine <T>/conversate/hooks mirror alongside the
 # canonical <T>/hooks, both generated from the single source hooks/ tree. Same-source
 # repair (doctor --fix on an installed root) refreshes a corrupted <T>/hooks from
 # that mirror, since <T>/hooks is otherwise its own source and dest (a no-op copy).
@@ -76,7 +84,7 @@ PLUGIN_COMPONENTS = ("SKILL.md", "skills", ".claude-plugin", ".codex-plugin", "h
 CLAUDE_PLUGIN_MANIFEST = (".claude-plugin", "plugin.json")
 CODEX_PLUGIN_MANIFEST = (".codex-plugin", "plugin.json")
 
-# Substrings that identify the conversate turn-counter hook entry.
+# Substrings that identify the Conversate turn-counter hook entry.
 OUR_HOOK_MARKERS = ("conv_turn_counter", "conv-turn-counter")
 OUR_HOOK_STATUS = "conversate auto-save turn counter"
 REQUIRED_PLUGIN_SOURCE_FILES = (
@@ -171,9 +179,16 @@ class Ctx:
 
 def plugin_source(ctx: Ctx) -> Path:
     # Plugin components (SKILL.md/skills/manifests) live at the repo root normally,
-    # but under <root>/conv when repairing an installed tree in place.
+    # but under <root>/conversate when repairing an installed tree in place.
     if ctx.repair and _same_path(ctx.source, ctx.target):
-        return ctx.canonical_plugin
+        if ctx.canonical_plugin.is_dir():
+            return ctx.canonical_plugin
+        # In-place repair of a legacy <root>/conv install: the new canonical root does
+        # not exist yet, so read the pristine components from the legacy root (only when
+        # it is conversate-owned) and migrate it into <root>/conversate below.
+        legacy = ctx.universal_root.joinpath(*LEGACY_CANONICAL_PLUGIN_DEST)
+        if _plugin_is_ours(legacy):
+            return legacy
     return ctx.source
 
 
@@ -739,10 +754,16 @@ def prune_stale_plugin_files(ctx: Ctx, dest_root: Path, expected_rels: set[Path]
 def _hook_tree_source(ctx: Ctx) -> Path | None:
     roots: list[Path] = []
     if ctx.repair and _same_path(ctx.source, ctx.target):
-        # Same-source repair: prefer the pristine <T>/conv/hooks mirror (regenerated
-        # from the single source hooks/ tree) so a corrupted <T>/hooks self-heals;
-        # <T>/hooks would otherwise be its own source and dest (a no-op copy).
+        # Same-source repair: prefer the pristine <T>/conversate/hooks mirror
+        # (regenerated from the single source hooks/ tree) so a corrupted <T>/hooks
+        # self-heals; <T>/hooks would otherwise be its own source and dest (a no-op).
         roots.append(ctx.canonical_plugin / HOOK_SOURCE_DIR)
+        # Legacy <T>/conv/hooks mirror for an in-place repair of a legacy install that
+        # has not yet migrated to <T>/conversate; only when conversate-owned, so a
+        # foreign <T>/conv is never copied into the new canonical root.
+        legacy_root = ctx.universal_root.joinpath(*LEGACY_CANONICAL_PLUGIN_DEST)
+        if _plugin_is_ours(legacy_root):
+            roots.append(legacy_root / HOOK_SOURCE_DIR)
     roots.append(ctx.source / HOOK_SOURCE_DIR)
     for root in roots:
         if root.is_dir():
@@ -821,7 +842,7 @@ def copy_canonical_hooks(ctx: Ctx) -> None:
 
 
 def install_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
-    """Copy the shared conv plugin skill group into an installed plugin root."""
+    """Copy the shared Conversate plugin skill group into an installed plugin root."""
     src = plugin_source(ctx)
     if not src.joinpath(*CLAUDE_PLUGIN_MANIFEST).is_file():
         emit(f"{label}: source scaffold not found (root .claude-plugin); skipping")
@@ -880,10 +901,10 @@ def install_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
     prune_stale_plugin_files(ctx, dest_root, expected_rels, label)
     emit(
         f"{label}: {created} created, {updated} updated, {replaced} replaced, "
-        f"{skipped} unchanged in {ctx.disp(dest_root)} (conv skill group)"
+        f"{skipped} unchanged in {ctx.disp(dest_root)} (Conversate skill group)"
     )
     if created or updated:
-        emit(f"{label}: restart or reload the agent so the conv skills are discovered")
+        emit(f"{label}: restart or reload the agent so the Conversate skills are discovered")
 
 
 def install_claude_plugin(ctx: Ctx) -> None:
@@ -931,10 +952,39 @@ def remove_claude_plugin(ctx: Ctx) -> None:
 
 def remove_legacy_plugin_copies(ctx: Ctx) -> None:
     for label, parts in (
+        ("legacy canonical plugin", LEGACY_CANONICAL_PLUGIN_DEST),
         ("legacy claude plugin", LEGACY_CLAUDE_PLUGIN_DEST),
         ("legacy agents plugin", LEGACY_AGENTS_PLUGIN_DEST),
     ):
         remove_agent_plugin(ctx, ctx.target.joinpath(*parts), label)
+
+
+def legacy_agent_scan_entrypoints(ctx: Ctx) -> list[tuple[str, Path]]:
+    """Real-home skills/conv scan entrypoints from the prior namespace
+    (under each agent's own config surface), superseded by skills/conversate."""
+    return [
+        ("codex entrypoint (legacy)", ctx.codex_config_surface.joinpath(*LEGACY_AGENT_SKILL_ENTRYPOINT)),
+        ("claude entrypoint (legacy)", ctx.claude_config_surface.joinpath(*LEGACY_AGENT_SKILL_ENTRYPOINT)),
+    ]
+
+
+def migrate_legacy_agent_scan_entrypoints(ctx: Ctx) -> None:
+    """Remove prior-namespace real-home skills/conv entrypoints when they are ours,
+    so the old visible namespace does not coexist with skills/conversate. Foreign or
+    absent paths are left untouched. Idempotent and dry-run aware."""
+    for label, path in legacy_agent_scan_entrypoints(ctx):
+        kind = link_kind(path)
+        if kind == "missing":
+            continue
+        ours = (kind in ("symlink", "junction") and resolves_to(path, ctx.canonical_plugin)) or _plugin_is_ours(path)
+        if not ours:
+            emit(f"{label}: {ctx.disp(path)} not conversate-owned; leaving as-is")
+            continue
+        if ctx.dry_run:
+            emit(f"{label}: would remove superseded {ctx.disp(path)}")
+            continue
+        _remove_dir_or_link(path)
+        emit(f"{label}: removed superseded {ctx.disp(path)}")
 
 # ----------------------------------------------------------------------------- hooks
 
@@ -1205,7 +1255,15 @@ def print_hook_instructions(ctx: Ctx) -> None:
 # --------------------------------------------------------------------------- uninstall
 
 def _command_text(entry: dict) -> str:
-    return " ".join(str(entry.get(k, "")) for k in ("command", "commandWindows"))
+    # `args` is included so the command+args hook form (e.g.
+    # {"command": "pwsh", "args": ["-File", "...conv-turn-counter.ps1"]}) is
+    # recognized as Conversate-owned by _is_our_hook / _hook_entry_points_to,
+    # not just the single-string command/commandWindows fields.
+    parts = [str(entry.get(k, "")) for k in ("command", "commandWindows")]
+    args = entry.get("args")
+    if isinstance(args, list):
+        parts.extend(str(a) for a in args)
+    return " ".join(parts)
 
 
 def _has_template_token(value) -> bool:
@@ -1319,6 +1377,8 @@ def do_uninstall(ctx: Ctx) -> int:
     for link in (ctx.target.joinpath(*LEGACY_CLAUDE_LINK), ctx.target.joinpath(*LEGACY_AGENTS_LINK)):
         remove_link(link, ctx)
     remove_scan_entrypoint(ctx, ctx.codex_scan_entrypoint, "codex entrypoint")
+    for _label, _path in legacy_agent_scan_entrypoints(ctx):
+        remove_scan_entrypoint(ctx, _path, _label)
     remove_claude_plugin(ctx)
     remove_legacy_plugin_copies(ctx)
     _remove_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
@@ -1547,6 +1607,8 @@ def do_status(ctx: Ctx) -> int:
     _emit_artifact_problems("canonical hook artifacts", hook_missing, hook_stale)
     emit(f"codex entrypoint: {_scan_entrypoint_status(ctx, ctx.codex_scan_entrypoint)} ({ctx.codex_scan_entrypoint})")
     emit(f"claude entrypoint: {_scan_entrypoint_status(ctx, ctx.claude_scan_entrypoint)} ({ctx.claude_scan_entrypoint})")
+    for _label, _path in legacy_agent_scan_entrypoints(ctx):
+        emit(f"{_label}: {_scan_entrypoint_status(ctx, _path)} ({_path})")
 
     for label, parts in (("legacy claude .claude/skills/conversate", LEGACY_CLAUDE_LINK),
                          ("legacy agents .agents/skills/conversate", LEGACY_AGENTS_LINK)):
@@ -1562,7 +1624,8 @@ def do_status(ctx: Ctx) -> int:
         else:
             emit(f"link {label}: foreign {kind} (not installer-created)")
 
-    for label, parts in (("legacy claude plugin .claude/skills/conv", LEGACY_CLAUDE_PLUGIN_DEST),
+    for label, parts in (("legacy canonical plugin conv", LEGACY_CANONICAL_PLUGIN_DEST),
+                         ("legacy claude plugin .claude/skills/conv", LEGACY_CLAUDE_PLUGIN_DEST),
                          ("legacy agents plugin .agents/skills/conv", LEGACY_AGENTS_PLUGIN_DEST)):
         plugin_root = ctx.target.joinpath(*parts)
         if _plugin_is_ours(plugin_root):
@@ -1735,10 +1798,10 @@ def _parse_set(value: str, valid: tuple[str, ...], label: str, allow_none: bool)
 def parse_args(argv):
     p = argparse.ArgumentParser(
         prog="install.py",
-        description="Install conversate plugin files into the Plugin installation root and create the Conversation database.",
+        description="Install Conversate plugin files into the Plugin installation root and create the Conversation database.",
     )
     p.add_argument("--target", help="Plugin installation root (default: ~/.conversate)")
-    p.add_argument("--source", help="conversate checkout to install from (default: this script's repo root)")
+    p.add_argument("--source", help="Conversate checkout to install from (default: this script's repo root)")
     p.add_argument("--agents", default="all", help="comma list of claude,pi,omp,codex or 'all' (default: all)")
     p.add_argument("--hooks", default=None, help="comma list of claude,pi,omp,codex, 'all', or 'none' (default: none; --repair defaults to available installer-owned hooks)")
     p.add_argument("--update", action="store_true", help="refresh plugin files while preserving the Conversation database")
@@ -1747,7 +1810,7 @@ def parse_args(argv):
     p.add_argument("--uninstall", action="store_true", help="remove installer-created plugins, legacy links, and hooks; leaves the Conversation database intact")
     p.add_argument("--status", action="store_true", help="report install state for the Plugin installation root and exit")
     p.add_argument("--dry-run", action="store_true", help="print planned actions; change nothing")
-    p.add_argument("--claude-plugin-only", action="store_true", help="only (un)install the canonical conv plugin and ~/.claude/skills/conv entrypoint")
+    p.add_argument("--claude-plugin-only", action="store_true", help="only (un)install the canonical Conversate plugin and ~/.claude/skills/conversate entrypoint")
     return p.parse_args(argv)
 
 
@@ -1806,8 +1869,10 @@ def main(argv=None) -> int:
                 emit("dry-run: no changes will be made")
             if args.uninstall:
                 remove_claude_plugin(ctx)
+                remove_scan_entrypoint(ctx, ctx.claude_config_surface.joinpath(*LEGACY_AGENT_SKILL_ENTRYPOINT), "claude entrypoint (legacy)")
             else:
                 install_claude_plugin(ctx)
+                migrate_legacy_agent_scan_entrypoints(ctx)
             emit("done" if not ctx.dry_run else "dry-run complete")
             return 0
         if args.uninstall:
@@ -1838,6 +1903,7 @@ def main(argv=None) -> int:
             install_agent_plugin(ctx, dest, label)
         for label, dest in planned_scan_entrypoints(agents, ctx):
             install_scan_entrypoint(ctx, dest, label)
+        migrate_legacy_agent_scan_entrypoints(ctx)
         remove_legacy_plugin_copies(ctx)
         if hooks:
             wire_hooks(ctx, hooks)

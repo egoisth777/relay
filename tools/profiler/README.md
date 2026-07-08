@@ -3,7 +3,7 @@
 `conversate_loading_profiler.py` measures the common runtime paths that affect
 skill startup and command latency:
 
-- common direct skill-file loading for `conv:save`, `conv:list`, and `conv:resume`
+- common direct skill-file loading for `conversate:save`, `conversate:list`, and `conversate:resume`
 - CLI subprocesses for `--help`, `init`, `list`, `upsert`, `rebuild-index`, and `regen-refs`
 - the Codex turn-counter hook under a copied temporary plugin layout
 

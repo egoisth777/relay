@@ -34,7 +34,7 @@ FULL_PAYLOAD = {
         "goal": "finish the redesign",
         "next_steps": ["write tests", "update docs"],
         "open_questions": ["adapter details?"],
-        "suggested_skills": ["conv:save"],
+        "suggested_skills": ["conversate:save"],
     },
     "user_instructions": ["use PowerShell", "never commit"],
     "condensed_transcript": [
@@ -219,7 +219,7 @@ second summary must not replace data
         self.assertIn("  - write tests", md)
         self.assertIn("- open-questions:", md)
         self.assertIn("- suggested-skills:", md)
-        self.assertIn("  - conv:save", md)
+        self.assertIn("  - conversate:save", md)
 
     def test_user_instructions_and_transcript_rendered(self) -> None:
         md = self._markdown(self._upsert(FULL_PAYLOAD))
