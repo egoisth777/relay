@@ -286,44 +286,24 @@ def _resolve_python3_command(
     )
 
 
-# Backslash is included so a bare Windows path (no spaces) is still quoted; an unquoted
-# backslash path is mangled by the POSIX-style shell that runs hook commands.
-_WINDOWS_SHELL_META = set("&()[]{}^=;!'+,`~|<>\\")
+def _quote_powershell_arg(arg: str) -> str:
+    # Single-quoted PowerShell strings are literal; an embedded apostrophe is
+    # represented by two apostrophes. This keeps $, `, &, and backslashes in
+    # hook paths from being interpreted by the shell.
+    return "'" + arg.replace("'", "''") + "'"
 
 
-def _quote_windows_shell_arg(arg: str) -> str:
-    needs_quote = not arg or any(ch.isspace() or ch in _WINDOWS_SHELL_META for ch in arg)
-    if not needs_quote:
-        return arg
-    out = ['"']
-    backslashes = 0
-    for ch in arg:
-        if ch == "\\":
-            backslashes += 1
-            continue
-        if ch == '"':
-            out.append("\\" * (backslashes * 2 + 1))
-            out.append('"')
-            backslashes = 0
-            continue
-        if backslashes:
-            out.append("\\" * backslashes)
-            backslashes = 0
-        out.append(ch)
-    if backslashes:
-        out.append("\\" * (backslashes * 2))
-    out.append('"')
-    return "".join(out)
-
-
-def _quote_command(args: tuple[str, ...], *, windows: bool) -> str:
-    if windows:
-        return " ".join(_quote_windows_shell_arg(str(arg)) for arg in args)
+def _quote_command(args: tuple[str, ...], *, powershell: bool) -> str:
+    if powershell:
+        # Codex evaluates its Windows hook command strings as PowerShell
+        # source. A quoted executable is only a string expression unless the
+        # call operator explicitly invokes it.
+        return "& " + " ".join(_quote_powershell_arg(str(arg)) for arg in args)
     return shlex.join(args)
 
 
-def _codex_hook_command(python_command: tuple[str, ...], script_path: Path, *, windows: bool) -> str:
-    return _quote_command((*python_command, str(script_path)), windows=windows)
+def _codex_hook_command(python_command: tuple[str, ...], script_path: Path, *, powershell: bool) -> str:
+    return _quote_command((*python_command, str(script_path)), powershell=powershell)
 
 
 def _resolve_powershell_executable(
@@ -341,19 +321,14 @@ def _resolve_powershell_executable(
     return "powershell" if is_windows else "pwsh"
 
 
-def _claude_hook_command(ctx: Ctx) -> str:
-    # Claude Code runs UserPromptSubmit hooks through a shell that on Windows is POSIX-style and
-    # strips backslashes from an UNQUOTED path (C:\Users\... -> C:Users...), so pwsh never finds
-    # the script. Quote every path token so the backslashes survive: a double-quoted backslash
-    # path is literal under both cmd.exe and a POSIX sh (these paths contain no $, `, " or
-    # backslash-escape sequence). Backslash is in _WINDOWS_SHELL_META, so even a space-free path
-    # is quoted; flags stay bare.
+def _claude_hook_invocation(ctx: Ctx) -> tuple[str, list[str]]:
     script_path = ctx.canonical_hooks / "claude" / "conv-turn-counter.ps1"
-    args: list[str] = [_resolve_powershell_executable(), "-NoProfile"]
+    command = _resolve_powershell_executable()
+    args = ["-NoProfile"]
     if os.name == "nt":
         args.extend(("-ExecutionPolicy", "Bypass"))
     args.extend(("-File", str(script_path)))
-    return _quote_command(tuple(args), windows=os.name == "nt")
+    return command, args
 
 
 # --------------------------------------------------------------------------- links
@@ -1110,8 +1085,12 @@ def _codex_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
                 # Some Codex builds on Windows execute the primary `command`
                 # field instead of `commandWindows`, so both must be runnable
                 # by the local shell when installing on Windows.
-                hook["command"] = _codex_hook_command(python_command, script_path, windows=os.name == "nt")
-                hook["commandWindows"] = _codex_hook_command(python_command, script_path, windows=True)
+                hook["command"] = _codex_hook_command(
+                    python_command, script_path, powershell=os.name == "nt"
+                )
+                hook["commandWindows"] = _codex_hook_command(
+                    python_command, script_path, powershell=True
+                )
                 rewritten += 1
     if rewritten == 0:
         raise InstallError("codex: template contains no conversate hook entry to rewrite")
@@ -1120,9 +1099,9 @@ def _codex_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
     return incoming
 
 
-def _claude_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
+def _claude_hook_template_with_invocation(ctx: Ctx, template_hooks: dict) -> dict:
     incoming = json.loads(json.dumps(template_hooks))
-    command = _claude_hook_command(ctx)
+    command, args = _claude_hook_invocation(ctx)
     for groups in incoming.values():
         if not isinstance(groups, list):
             continue
@@ -1133,7 +1112,10 @@ def _claude_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
             for hook in hooks:
                 if not _is_our_hook(hook):
                     continue
+                hook.pop("commandWindows", None)
+                hook.pop("shell", None)
                 hook["command"] = command
+                hook["args"] = list(args)
     return incoming
 
 
@@ -1151,7 +1133,7 @@ def wire_claude_hook(ctx: Ctx) -> None:
     if not isinstance(incoming, dict):
         emit("claude: settings-snippet.json has no 'hooks' object; skipping")
         return
-    incoming = _claude_hook_template_with_command(ctx, incoming)
+    incoming = _claude_hook_template_with_invocation(ctx, incoming)
 
     settings_path = ctx.claude_settings_json
     settings: dict = {}
@@ -1473,11 +1455,50 @@ def _norm_hook_text(value: object) -> str:
     return str(value).replace("\\", "/").lower()
 
 
+def _hook_text_points_to(value: object, expected_script: Path) -> bool:
+    command = _norm_hook_text(value)
+    expected = str(expected_script)
+    candidates = (expected, _quote_powershell_arg(expected))
+    return any(_norm_hook_text(candidate) in command for candidate in candidates)
+
+
 def _hook_entry_points_to(entry: dict, expected_script: Path) -> bool:
-    return _norm_hook_text(expected_script) in _norm_hook_text(_command_text(entry))
+    return _hook_text_points_to(_command_text(entry), expected_script)
 
 
-def _json_hook_status(path: Path, expected_script: Path) -> str:
+def _hook_invocation_is_current(entry: dict, expected_script: Path, *, agent: str) -> bool:
+    command = entry.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    if agent == "codex":
+        command_windows = entry.get("commandWindows")
+        if not isinstance(command_windows, str) or not command_windows.lstrip().startswith("& "):
+            return False
+        if os.name == "nt" and not command.lstrip().startswith("& "):
+            return False
+        return (
+            _hook_text_points_to(command, expected_script)
+            and _hook_text_points_to(command_windows, expected_script)
+            and "args" not in entry
+            and "shell" not in entry
+        )
+    if agent == "claude":
+        args = entry.get("args")
+        if not isinstance(args, list):
+            return False
+        executable = command.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        expected = _norm_hook_text(expected_script)
+        return (
+            executable in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
+            and any(str(arg).lower() == "-file" for arg in args)
+            and any(_norm_hook_text(arg) == expected for arg in args)
+            and "commandWindows" not in entry
+            and "shell" not in entry
+        )
+    return False
+
+
+def _json_hook_status(path: Path, expected_script: Path, *, agent: str) -> str:
     if not path.is_file():
         return "not wired"
     entries = _json_hook_entries(path)
@@ -1488,6 +1509,10 @@ def _json_hook_status(path: Path, expected_script: Path) -> str:
         return "not wired"
     canonical = sum(1 for entry in ours if _hook_entry_points_to(entry, expected_script))
     if canonical == len(ours):
+        if not all(
+            _hook_invocation_is_current(entry, expected_script, agent=agent) for entry in ours
+        ):
+            return "wired -> canonical hooks (stale invocation)"
         return "wired -> canonical hooks"
     if canonical:
         return "mixed canonical/stale hook targets"
@@ -1642,10 +1667,10 @@ def do_status(ctx: Ctx) -> int:
         path = ctx.target.joinpath(*parts)
         emit(f"{label}: {_legacy_hook_config_status(path)} ({path})")
 
-    emit(f"hook claude: {_json_hook_status(ctx.claude_settings_json, ctx.canonical_hooks / 'claude' / 'conv-turn-counter.ps1')} ({ctx.claude_settings_json})")
+    emit(f"hook claude: {_json_hook_status(ctx.claude_settings_json, ctx.canonical_hooks / 'claude' / 'conv-turn-counter.ps1', agent='claude')} ({ctx.claude_settings_json})")
     emit(f"hook pi: {'wired' if ctx.pi_hook_file.is_file() else 'not wired'}")
     emit(f"hook omp: {'wired' if ctx.omp_hook_file.is_file() else 'not wired'}")
-    emit(f"hook codex: {_json_hook_status(ctx.codex_hooks_json, ctx.canonical_hooks / 'codex' / 'conv_turn_counter.py')} ({ctx.codex_hooks_json})")
+    emit(f"hook codex: {_json_hook_status(ctx.codex_hooks_json, ctx.canonical_hooks / 'codex' / 'conv_turn_counter.py', agent='codex')} ({ctx.codex_hooks_json})")
     return 0
 
 

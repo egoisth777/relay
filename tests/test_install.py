@@ -60,6 +60,40 @@ def run_install(args, cwd=None, env=None) -> subprocess.CompletedProcess:
     )
 
 
+def run_generated_hook(command: str, *, input_text: str, cwd: Path) -> subprocess.CompletedProcess:
+    if os.name == "nt":
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            pytest.skip("PowerShell is not available to replay a generated Windows hook command")
+        invocation: str | list[str] = [
+            powershell, "-NoProfile", "-NonInteractive", "-Command", command
+        ]
+        shell = False
+    else:
+        invocation = command
+        shell = True
+    return subprocess.run(
+        invocation,
+        shell=shell,
+        input=input_text,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+    )
+
+
+def run_generated_exec(
+    command: str, args: list[str], *, input_text: str, cwd: Path
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [command, *args],
+        input=input_text,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+    )
+
+
 def install_into(target: Path, *extra, home: Path | None = None) -> subprocess.CompletedProcess:
     if home is None:
         home = agent_home_for(target)
@@ -294,12 +328,12 @@ def test_real_codex_and_claude_homes_get_entrypoints_and_hook_config(tmp_path):
     codex_hook = conversate_codex_hook(root, home=home)
     codex_command = codex_hook["command"] + codex_hook["commandWindows"]
     assert str(canonical_hooks / "codex" / "conv_turn_counter.py") in codex_command
-    claude_command = next(
-        entry["command"]
+    claude_hook = next(
+        entry
         for entry in claude_hook_entries(root, home=home)
         if "conv-turn-counter" in json.dumps(entry)
     )
-    assert str(canonical_hooks / "claude" / "conv-turn-counter.ps1") in claude_command
+    assert claude_hook["args"][-1] == str(canonical_hooks / "claude" / "conv-turn-counter.ps1")
 
 
 def test_status_and_dry_run_report_real_agent_surfaces(tmp_path):
@@ -375,7 +409,9 @@ def test_status_reports_wrong_entrypoints_and_stale_nested_surfaces(tmp_path):
     codex_hooks.write_text(json.dumps(codex_data), encoding="utf-8")
     claude_settings = home / ".claude" / "settings.json"
     claude_data = json.loads(claude_settings.read_text(encoding="utf-8"))
-    claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = "pwsh -File stale/conv-turn-counter.ps1"
+    claude_hook = claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    claude_hook["command"] = "pwsh -File stale/conv-turn-counter.ps1"
+    claude_hook.pop("args", None)
     claude_settings.write_text(json.dumps(claude_data), encoding="utf-8")
 
     status = install_into(root, "--status", home=home)
@@ -388,6 +424,51 @@ def test_status_reports_wrong_entrypoints_and_stale_nested_surfaces(tmp_path):
     assert "legacy nested claude hook .claude/settings.json: stale installer-owned hook config" in status.stdout
     assert f"hook codex: wired outside canonical hook root ({codex_hooks})" in status.stdout
     assert f"hook claude: wired outside canonical hook root ({claude_settings})" in status.stdout
+
+
+def test_status_distinguishes_canonical_targets_with_stale_invocation_shapes(tmp_path):
+    root = tmp_path / "plugin-root"
+    first = install_into(root, "--hooks", "codex,claude")
+    assert first.returncode == 0, first.stderr + first.stdout
+
+    codex_path = codex_hooks_path(root)
+    codex_data = json.loads(codex_path.read_text(encoding="utf-8"))
+    codex_hook = codex_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    command_windows = codex_hook["commandWindows"]
+    codex_script = root / "hooks" / "codex" / "conv_turn_counter.py"
+    stale_script = root / "stale" / "conv_turn_counter.py"
+    codex_hook["commandWindows"] = command_windows.replace(
+        str(codex_script), str(stale_script)
+    )
+    codex_path.write_text(json.dumps(codex_data), encoding="utf-8")
+
+    claude_path = claude_settings_path(root)
+    claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
+    claude_hook = claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    script = claude_hook.pop("args")[-1]
+    claude_hook["command"] = f'{claude_hook["command"]} -NoProfile -File "{script}"'
+    claude_path.write_text(json.dumps(claude_data), encoding="utf-8")
+
+    status = install_into(root, "--status")
+    assert status.returncode == 0, status.stderr + status.stdout
+    assert "hook codex: wired -> canonical hooks (stale invocation)" in status.stdout
+    assert "hook claude: wired -> canonical hooks (stale invocation)" in status.stdout
+
+    codex_hook["commandWindows"] = command_windows.removeprefix("& ")
+    if os.name == "nt":
+        codex_hook["command"] = codex_hook["command"].removeprefix("& ")
+    codex_path.write_text(json.dumps(codex_data), encoding="utf-8")
+    unprefixed_status = install_into(root, "--status")
+    assert unprefixed_status.returncode == 0, unprefixed_status.stderr + unprefixed_status.stdout
+    assert "hook codex: wired -> canonical hooks (stale invocation)" in unprefixed_status.stdout
+
+    repaired = install_into(root, "--repair")
+    assert repaired.returncode == 0, repaired.stderr + repaired.stdout
+    repaired_status = install_into(root, "--status")
+    assert repaired_status.returncode == 0, repaired_status.stderr + repaired_status.stdout
+    assert f"hook codex: wired -> canonical hooks ({codex_path})" in repaired_status.stdout
+    assert f"hook claude: wired -> canonical hooks ({claude_path})" in repaired_status.stdout
+    assert "stale invocation" not in repaired_status.stdout
 
 
 def test_repair_migrates_stale_nested_copy_state_to_conversate_ssot(tmp_path):
@@ -425,13 +506,14 @@ def test_repair_migrates_stale_nested_copy_state_to_conversate_ssot(tmp_path):
     codex_command = codex_hook["command"] + codex_hook["commandWindows"]
     assert str(root / "hooks" / "codex" / "conv_turn_counter.py") in codex_command
     assert_stale_hook_targets_removed(codex_command)
-    claude_command = next(
-        entry["command"]
+    claude_hook = next(
+        entry
         for entry in claude_hook_entries(root, home=home)
         if "conv-turn-counter" in json.dumps(entry)
     )
-    assert str(root / "hooks" / "claude" / "conv-turn-counter.ps1") in claude_command
-    assert_stale_hook_targets_removed(claude_command)
+    claude_invocation = install_mod._command_text(claude_hook)
+    assert str(root / "hooks" / "claude" / "conv-turn-counter.ps1") in claude_invocation
+    assert_stale_hook_targets_removed(claude_invocation)
     assert record.read_bytes() == record_bytes
     assert nested_record.read_bytes() == nested_record_bytes
     assert not os.path.lexists(root.joinpath(*LEGACY_AGENTS_PLUGIN))
@@ -617,58 +699,66 @@ def test_codex_hook_command_quotes_verified_python_and_script_paths_with_spaces(
     assert str(script) in hook["command"]
     assert str(script) in hook["commandWindows"]
     assert "__CONVERSATE_" not in hook["command"] + hook["commandWindows"]
-    assert f'"{script}"' in hook["commandWindows"]
+    assert hook["commandWindows"].startswith("& ")
+    assert install_mod._quote_powershell_arg(str(script)) in hook["commandWindows"]
     if os.name == "nt":
-        assert f'"{script}"' in hook["command"]
+        assert hook["command"].startswith("& ")
+        assert install_mod._quote_powershell_arg(str(script)) in hook["command"]
     assert not hook["command"].lstrip().startswith("python3 ")
     assert not hook["commandWindows"].lstrip().startswith("python3 ")
 
 
-def test_generated_hook_commands_execute_from_installed_configs_with_ampersand_path(tmp_path):
-    root = tmp_path / "Plugin&Root"
+def test_generated_hook_commands_execute_through_configured_shell_with_metacharacter_path(tmp_path):
+    root = tmp_path / "Plugin&Root O'Brien $HOME`literal"
     proc = install_into(root, "--hooks", "codex,claude")
     assert proc.returncode == 0, proc.stderr + proc.stdout
 
     codex_hook = conversate_codex_hook(root)
     codex_script = root / "hooks" / "codex" / "conv_turn_counter.py"
     if os.name == "nt":
-        assert f'"{codex_script}"' in codex_hook["commandWindows"]
-        assert f'"{codex_script}"' in codex_hook["command"]
+        quoted_script = install_mod._quote_powershell_arg(str(codex_script))
+        assert codex_hook["commandWindows"].startswith("& ")
+        assert quoted_script in codex_hook["commandWindows"]
+        assert codex_hook["command"].startswith("& ")
+        assert quoted_script in codex_hook["command"]
         codex_commands = {"command": codex_hook["command"], "commandWindows": codex_hook["commandWindows"]}
     else:
         codex_commands = {"command": codex_hook["command"]}
     for label, codex_command in codex_commands.items():
-        codex_run = subprocess.run(
+        codex_run = run_generated_hook(
             codex_command,
-            shell=True,
-            input=json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": f"codex-{tmp_path.name}"}),
-            cwd=str(tmp_path),
-            capture_output=True,
-            text=True,
+            input_text=json.dumps(
+                {"hook_event_name": "UserPromptSubmit", "session_id": f"codex-{tmp_path.name}"}
+            ),
+            cwd=tmp_path,
         )
         assert codex_run.returncode == 0, f"{label}: " + codex_run.stderr + codex_run.stdout
 
     if not (shutil.which("pwsh") or shutil.which("powershell")):
         pytest.skip("PowerShell is not available to execute the generated Claude hook command")
-    claude_command = next(entry["command"] for entry in claude_hook_entries(root) if "conv-turn-counter" in json.dumps(entry))
+    claude_hook = next(
+        entry for entry in claude_hook_entries(root) if "conv-turn-counter" in json.dumps(entry)
+    )
     claude_script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
-    if os.name == "nt":
-        assert f'"{claude_script}"' in claude_command
-    claude_run = subprocess.run(
-        claude_command,
-        shell=True,
-        input=json.dumps(
+    assert claude_hook["args"][-1] == str(claude_script)
+    claude_run = run_generated_exec(
+        claude_hook["command"],
+        claude_hook["args"],
+        input_text=json.dumps(
             {
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": f"claude-{tmp_path.name}",
                 "cwd": str(tmp_path),
             }
         ),
-        cwd=str(tmp_path),
-        capture_output=True,
-        text=True,
+        cwd=tmp_path,
     )
     assert claude_run.returncode == 0, claude_run.stderr + claude_run.stdout
+
+    status = install_into(root, "--status")
+    assert status.returncode == 0, status.stderr + status.stdout
+    assert "hook codex: wired -> canonical hooks" in status.stdout
+    assert "hook claude: wired -> canonical hooks" in status.stdout
 
 
 def test_repair_restores_payload_plugins_and_missing_codex_hook_without_touching_convs(tmp_path):
@@ -821,8 +911,10 @@ def test_repair_without_hooks_rewires_all_stale_owned_hooks(tmp_path):
 
     codex = conversate_codex_hook(root)
     assert_stale_hook_targets_removed(codex["command"] + codex["commandWindows"])
-    claude_command = next(entry["command"] for entry in claude_hook_entries(root) if "conv-turn-counter" in json.dumps(entry))
-    assert_stale_hook_targets_removed(claude_command)
+    claude_hook = next(
+        entry for entry in claude_hook_entries(root) if "conv-turn-counter" in json.dumps(entry)
+    )
+    assert_stale_hook_targets_removed(install_mod._command_text(claude_hook))
     assert "stale" not in pi_hook.read_text(encoding="utf-8")
     assert "stale" not in omp_hook.read_text(encoding="utf-8")
 
@@ -1005,9 +1097,9 @@ def test_claude_hook_uses_custom_target_and_replaces_owned_hook(tmp_path):
     text = settings.read_text(encoding="utf-8")
     script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
     entries = claude_hook_entries(root)
-    command = next(entry["command"] for entry in entries if "conv-turn-counter" in json.dumps(entry))
-    assert str(script) in command
-    assert " -NoProfile " in f" {command} "
+    hook = next(entry for entry in entries if "conv-turn-counter" in json.dumps(entry))
+    assert hook["args"][-1] == str(script)
+    assert "-NoProfile" in hook["args"]
     assert "~/.conversate/hooks/claude" not in text
     assert "echo foreign" in text
     assert sum(1 for entry in entries if "conv-turn-counter" in json.dumps(entry)) == 1
@@ -1028,6 +1120,30 @@ def test_claude_hook_command_text_inspects_args_for_ownership():
     # Non-conversate args-form entry is NOT claimed as ours.
     foreign = {"type": "command", "command": "pwsh", "args": ["-File", "other.ps1"]}
     assert not install_mod._is_our_hook(foreign)
+
+
+def test_canonical_claude_exec_hook_is_owned_and_canonical(tmp_path):
+    script = tmp_path / "O'Brien" / "hooks" / "claude" / "conv-turn-counter.ps1"
+    entry = {
+        "type": "command",
+        "command": r"C:\Program Files\PowerShell\7\pwsh.exe",
+        "args": ["-NoProfile", "-File", str(script)],
+    }
+
+    assert install_mod._is_our_hook(entry)
+    assert install_mod._hook_entry_points_to(entry, script)
+
+
+def test_powershell_call_operator_hook_remains_owned_and_canonical(tmp_path):
+    script = tmp_path / "O'Brien" / "hooks" / "codex" / "conv_turn_counter.py"
+    command = install_mod._codex_hook_command(
+        (r"C:\Program Files\Python\python.exe",), script, powershell=True
+    )
+    entry = {"type": "command", "commandWindows": command}
+
+    assert command.startswith("& '")
+    assert install_mod._is_our_hook(entry)
+    assert install_mod._hook_entry_points_to(entry, script)
 
 
 def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_owned_hook(tmp_path):
@@ -1053,6 +1169,8 @@ def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_o
                                 {
                                     "type": "command",
                                     "command": "pwsh",
+                                    "commandWindows": "pwsh -File stale/conv-turn-counter.ps1",
+                                    "shell": "powershell",
                                     "args": [
                                         "-NoProfile",
                                         "-ExecutionPolicy",
@@ -1092,13 +1210,14 @@ def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_o
     # A foreign hook in the same group is preserved.
     assert "echo foreign" in text
     entries = claude_hook_entries(root, home=home)
-    # Exactly one Conversate entry remains, now in canonical command-string form.
+    # Exactly one Conversate entry remains, now in canonical shell-free exec form.
     owned = [entry for entry in entries if "conv-turn-counter" in json.dumps(entry)]
     assert len(owned) == 1
     script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
-    assert str(script) in owned[0]["command"]
-    # The rewritten entry no longer carries a stale args list.
-    assert "args" not in owned[0]
+    assert owned[0]["args"][-1] == str(script)
+    assert owned[0]["command"] == install_mod._resolve_powershell_executable()
+    assert "commandWindows" not in owned[0]
+    assert "shell" not in owned[0]
 
 
 def test_python3_resolver_verifies_candidates_before_returning():
@@ -1130,6 +1249,15 @@ def test_conversate_python_windows_parsing_preserves_backslashes_and_quoted_spac
     assert candidates[0] == (r"C:\Tools\Python311\python.exe", "-X", "utf8")
 
 
+def test_powershell_quoting_is_literal_and_escapes_apostrophes():
+    executable = "C:\\Tools & O'Brien\\$Python` (3)\\python.exe\\"
+    command = install_mod._quote_command(
+        (executable, "-X", "", "$HOME"), powershell=True
+    )
+
+    assert command == "& 'C:\\Tools & O''Brien\\$Python` (3)\\python.exe\\' '-X' '' '$HOME'"
+
+
 def test_conversate_python_windows_quoting_handles_shell_meta_and_trailing_backslash(monkeypatch, tmp_path):
     configured = r'"C:\Tools & Stuff\Python (3)\python.exe\" -X utf8'
     parsed = install_mod._python3_candidates(
@@ -1157,10 +1285,10 @@ def test_conversate_python_windows_quoting_handles_shell_meta_and_trailing_backs
 
     incoming = install_mod._codex_hook_template_with_command(ctx, template)
     hook = incoming["UserPromptSubmit"][0]["hooks"][0]
-    assert hook["commandWindows"].startswith('"C:\\Tools & Stuff\\Python (3)\\python.exe\\\\" -X utf8 ')
+    quoted_python = install_mod._quote_powershell_arg(parsed[0])
+    assert hook["commandWindows"].startswith(f"& {quoted_python} '-X' 'utf8' ")
     if os.name == "nt":
-        assert hook["command"].startswith('"C:\\Tools & Stuff\\Python (3)\\python.exe\\\\" -X utf8 ')
-    assert " & " not in hook["commandWindows"].split('"', maxsplit=2)[2]
+        assert hook["command"].startswith(f"& {quoted_python} '-X' 'utf8' ")
     assert "old" not in hook["command"] + hook["commandWindows"]
 
 
@@ -1184,8 +1312,11 @@ def test_codex_hook_template_uses_verified_python_command(monkeypatch, tmp_path)
     incoming = install_mod._codex_hook_template_with_command(ctx, template)
     hook = incoming["UserPromptSubmit"][0]["hooks"][0]
     script = tmp_path / "hooks" / "codex" / "conv_turn_counter.py"
-    assert hook["command"].startswith("verified-python -3 ")
-    assert hook["commandWindows"].startswith("verified-python -3 ")
+    if os.name == "nt":
+        assert hook["command"].startswith("& 'verified-python' '-3' ")
+    else:
+        assert hook["command"].startswith("verified-python -3 ")
+    assert hook["commandWindows"].startswith("& 'verified-python' '-3' ")
     assert str(script) in hook["command"]
     assert str(script) in hook["commandWindows"]
     assert "old" not in hook["command"] + hook["commandWindows"]
