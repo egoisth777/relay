@@ -21,3 +21,4 @@ skills-lock.json
 
 # pi subagent artifacts
 /.pi-subagents/
+/.orca/
