@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Profile and gate common conversate runtime paths.
+"""Profile and gate common relay runtime paths.
 
 The harness measures the real CLI and hook entrypoints through subprocesses,
 but it always uses temporary Plugin installation roots and never writes to the
-user's real ~/.conversate database. In gate mode it compares each operation's
+user's real ~/.relay database. In gate mode it compares each operation's
 median and max elapsed time against JSON budgets.
 """
 from __future__ import annotations
@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 REPO = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
+RUST_BINARY = REPO / "target" / "debug" / ("relay.exe" if os.name == "nt" else "relay")
 PROFILER_DIR = REPO / "tools" / "profiler"
 DEFAULT_BUDGET_FILE = PROFILER_DIR / "runtime_budgets.json"
 RESULTS_DIR = PROFILER_DIR / "results"
@@ -315,9 +316,32 @@ def time_repeated_callable(label: str, runs: int, func: Callable[[], dict[str, A
     }
 
 
-def conv_cli(*args: object) -> list[str]:
-    return [PYTHON, str(REPO / "scripts" / "conv_cli.py"), *map(str, args)]
+def rust_binary_path() -> Path:
+    """Return the checkout's debug Rust binary path, including cross-platform fallback."""
+    candidates = (
+        RUST_BINARY,
+        REPO / "target" / "debug" / ("relay" if RUST_BINARY.name.endswith(".exe") else "relay.exe"),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return RUST_BINARY
 
+
+def ensure_rust_binary(timeout: int) -> Path:
+    """Build the debug binary as setup, never as part of measured samples."""
+    binary = rust_binary_path()
+    if binary.is_file():
+        return binary
+    build = run_cmd(["cargo", "build", "--bin", "relay"], timeout=timeout, cwd=REPO)
+    binary = rust_binary_path()
+    if build["returncode"] != 0 or build["timed_out"] or not binary.is_file():
+        raise RuntimeError(f"could not build debug relay binary: {build}")
+    return binary
+
+
+def relay_cmd(*args: object) -> list[str]:
+    return [str(rust_binary_path()), *map(str, args)]
 
 def profiler_record_id(i: int) -> str:
     return f"conv_profiler_{i:04d}"
@@ -336,10 +360,10 @@ def conversation_payload(i: int, *, ref_previous: bool = False) -> str:
             "decisions": "1. Use temporary roots only.",
         },
         "resume": {
-            "goal": "measure conversate latency gates",
+            "goal": "measure relay latency gates",
             "next_steps": ["collect timings", "compare budgets"],
             "open_questions": [],
-            "suggested_skills": ["conversate:save"],
+            "suggested_skills": ["relay:save"],
         },
         "user_instructions": ["do not mutate the real conversation database"],
         "condensed_transcript": [
@@ -352,14 +376,14 @@ def conversation_payload(i: int, *, ref_previous: bool = False) -> str:
 
 
 def init_root(root: Path, timeout: int) -> None:
-    result = run_cmd(conv_cli("init", "--conv-root", root), timeout=timeout)
+    result = run_cmd(relay_cmd("init", "--relay-root", root), timeout=timeout)
     if result["returncode"] != 0:
         raise RuntimeError(f"could not initialize profiler root {root}: {result}")
 
 
 def upsert_record(root: Path, i: int, timeout: int, *, ref_previous: bool = False) -> None:
     result = run_cmd(
-        conv_cli("upsert", "--stdin", "--conv-root", root),
+        relay_cmd("upsert", "--stdin", "--relay-root", root),
         input_text=conversation_payload(i, ref_previous=ref_previous),
         timeout=timeout,
     )
@@ -458,10 +482,10 @@ DIRECT_COMMON_PATH_SKILLS = {
     "list": (REPO / "skills" / "list" / "SKILL.md",),
     "resume": (REPO / "skills" / "resume" / "SKILL.md",),
 }
-FIRST_USEFUL_ACTION_MARKER = "python ~/.conversate/scripts/conv_cli.py"
+FIRST_USEFUL_ACTION_MARKER = "~/.relay/bin/relay"
 BROAD_COMMON_PATH_FILES = {
     "SKILL.md",
-    "skills/conversate/SKILL.md",
+    "skills/relay/SKILL.md",
     "references/branching.md",
     "references/cli.md",
     "references/list.md",
@@ -469,8 +493,8 @@ BROAD_COMMON_PATH_FILES = {
     "references/save.md",
 }
 FORBIDDEN_PRE_ACTION_TEXT = (
-    "~/.conversate/references/",
-    "~/.conversate/SKILL.md",
+    "~/.relay/references/",
+    "~/.relay/SKILL.md",
     "follow it exactly",
 )
 
@@ -583,7 +607,7 @@ def op_cli_help(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, 
     return time_repeated_command(
         "cli_help",
         config.runs,
-        lambda _i: conv_cli("--help"),
+        lambda _i: relay_cmd("--help"),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
     )
@@ -595,7 +619,7 @@ def op_cli_init(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, 
     return time_repeated_command(
         "cli_init",
         config.runs,
-        lambda i: conv_cli("init", "--conv-root", root_base / f"root-{i}"),
+        lambda i: relay_cmd("init", "--relay-root", root_base / f"root-{i}"),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
         root=root_base,
@@ -608,7 +632,7 @@ def op_cli_list(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, 
     result = time_repeated_command(
         "cli_list",
         config.runs,
-        lambda _i: conv_cli("list", "--json", "--limit", "10", "--conv-root", root),
+        lambda _i: relay_cmd("list", "--json", "--limit", "10", "--relay-root", root),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
         root=root,
@@ -622,7 +646,7 @@ def op_cli_upsert(config: Config, base: Path, cache: dict[str, Any]) -> dict[str
     result = time_repeated_command(
         "cli_upsert",
         config.runs,
-        lambda _i: conv_cli("upsert", "--stdin", "--conv-root", root),
+        lambda _i: relay_cmd("upsert", "--stdin", "--relay-root", root),
         make_input=lambda i: conversation_payload(UPSERT_MEASURED_RECORD_START + i),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
@@ -653,7 +677,7 @@ def op_cli_rebuild_index(config: Config, base: Path, cache: dict[str, Any]) -> d
     result = time_repeated_command(
         "cli_rebuild_index",
         config.runs,
-        lambda _i: conv_cli("rebuild-index", "--conv-root", root),
+        lambda _i: relay_cmd("rebuild-index", "--relay-root", root),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
         root=root,
@@ -667,7 +691,7 @@ def op_cli_regen_refs(config: Config, base: Path, cache: dict[str, Any]) -> dict
     result = time_repeated_command(
         "cli_regen_refs",
         config.runs,
-        lambda _i: conv_cli("regen-refs", "--conv-root", root),
+        lambda _i: relay_cmd("regen-refs", "--relay-root", root),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
         root=root,
@@ -689,30 +713,30 @@ def hook_payload(base: Path) -> str:
     )
 
 
-def prepare_codex_hook(base: Path, cache: dict[str, Any]) -> tuple[Path, dict[str, str]]:
+def prepare_codex_hook(base: Path, cache: dict[str, Any], timeout: int) -> tuple[Path, dict[str, str]]:
     cached = cache.get("codex-hook")
     if cached:
         return cached
     plugin_root = base / "codex-hook-plugin"
-    hook = plugin_root / "hooks" / "codex" / "conv_turn_counter.py"
-    hook.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(REPO / "hooks" / "codex" / "conv_turn_counter.py", hook)
+    binary = plugin_root / "bin" / rust_binary_path().name
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ensure_rust_binary(timeout), binary)
     (plugin_root / "convs").mkdir(parents=True, exist_ok=True)
     counter_tmp = base / "codex-hook-tmp"
     counter_tmp.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env.update({"TMP": str(counter_tmp), "TEMP": str(counter_tmp), "TMPDIR": str(counter_tmp)})
-    cache["codex-hook"] = (hook, env)
-    return hook, env
+    cache["codex-hook"] = (binary, env)
+    return binary, env
 
 
 def op_codex_hook(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    hook, env = prepare_codex_hook(base, cache)
-    plugin_root = hook.parents[2]
+    binary, env = prepare_codex_hook(base, cache, config.command_timeout)
+    plugin_root = binary.parents[1]
     return time_repeated_command(
         "codex_hook",
         config.runs,
-        lambda _i: [PYTHON, str(hook)],
+        lambda _i: [str(binary), "hook", "--agent", "codex"],
         make_input=lambda _i: hook_payload(base),
         warmups=config.subprocess_warmups,
         timeout=config.command_timeout,
@@ -754,23 +778,23 @@ def top_profile_functions(profile_path: Path, limit: int = 12) -> list[dict[str,
     return rows
 
 
-def profile_python_command(
+def profile_command(
     label: str,
-    script_args: list[str],
+    command: list[str],
     *,
     input_text: str | None = None,
     env: dict[str, str] | None = None,
     profile_dir: Path,
     timeout: int,
 ) -> dict[str, Any]:
+    """Profile the Python subprocess launcher while executing the Rust command directly."""
     profile_dir.mkdir(parents=True, exist_ok=True)
     profile_path = profile_dir / f"{safe_name(label)}.prof"
-    result = run_cmd(
-        [PYTHON, "-m", "cProfile", "-o", str(profile_path), *script_args],
-        input_text=input_text,
-        env=env,
-        timeout=timeout,
-    )
+    profiler = cProfile.Profile()
+    profiler.enable()
+    result = run_cmd(command, input_text=input_text, env=env, timeout=timeout)
+    profiler.disable()
+    profiler.dump_stats(str(profile_path))
     return {
         "label": label,
         "run": result,
@@ -806,19 +830,19 @@ def run_profiles(
         profiles.append(profile_skill_loader(config.profile_dir))
     if "cli_help" in selected:
         profiles.append(
-            profile_python_command(
+            profile_command(
                 "cli_help",
-                [str(REPO / "scripts" / "conv_cli.py"), "--help"],
+                relay_cmd("--help"),
                 profile_dir=config.profile_dir,
                 timeout=config.command_timeout,
             )
         )
     if "codex_hook" in selected:
-        hook, env = prepare_codex_hook(base, cache)
+        binary, env = prepare_codex_hook(base, cache, config.command_timeout)
         profiles.append(
-            profile_python_command(
+            profile_command(
                 "codex_hook",
-                [str(hook)],
+                [str(binary), "hook", "--agent", "codex"],
                 input_text=hook_payload(base),
                 env=env,
                 profile_dir=config.profile_dir,
@@ -1036,7 +1060,7 @@ def expand_only(values: list[str] | None) -> list[str]:
 
 
 def default_out_path() -> Path:
-    return RESULTS_DIR / f"conversate-loading-profile-{now_stamp()}.json"
+    return RESULTS_DIR / f"relay-loading-profile-{now_stamp()}.json"
 
 
 def write_report(report: dict[str, Any], out: Path | None, *, stdout_json: bool) -> str | None:
@@ -1052,7 +1076,7 @@ def write_report(report: dict[str, Any], out: Path | None, *, stdout_json: bool)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Profile conversate skill loading, CLI commands, and the Codex hook with optional budget gates."
+        description="Profile relay skill loading, CLI commands, and the Codex hook with optional budget gates."
     )
     parser.add_argument("--gate", action="store_true", help="exit non-zero when any selected operation exceeds budget")
     parser.add_argument("--runs", type=int, default=5, help="timing samples per operation")
@@ -1103,6 +1127,12 @@ def main(argv: list[str] | None = None) -> int:
         profile_dir=profile_dir,
         subprocess_warmups=DEFAULT_SUBPROCESS_WARMUPS,
     )
+    if any(name != "skill_load_common_path" for name in selected):
+        try:
+            ensure_rust_binary(config.command_timeout)
+        except RuntimeError as exc:
+            print(f"profiler: {exc}", file=sys.stderr)
+            return 2
 
     started = time.perf_counter()
     cache: dict[str, Any] = {}

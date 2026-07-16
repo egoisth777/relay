@@ -1,9 +1,9 @@
-# Conversate Runtime Profiler
+# Relay Runtime Profiler
 
-`conversate_loading_profiler.py` measures the common runtime paths that affect
+`relay_loading_profiler.py` measures the common runtime paths that affect
 skill startup and command latency:
 
-- common direct skill-file loading for `conversate:save`, `conversate:list`, and `conversate:resume`
+- common direct skill-file loading for `relay:save`, `relay:list`, and `relay:resume`
 - CLI subprocesses for `--help`, `init`, `list`, `upsert`, `rebuild-index`, and `regen-refs`
 - the Codex turn-counter hook under a copied temporary plugin layout
 
@@ -19,26 +19,26 @@ The common-path gate verifies each direct verb loads only narrow skill files,
 does not front-load broad root or reference docs before the first CLI action,
 and stays under the checked-in file-count, byte, and rough-token budgets.
 
-The profiler never writes to the real `~/.conversate` database. CLI commands use
+The profiler never writes to the real `~/.relay` database. CLI commands use
 temporary Plugin installation roots, and the hook profiler uses an isolated temp
 counter directory.
 
 Run a budget gate:
 
 ```powershell
-python tools/profiler/conversate_loading_profiler.py --gate
+python tools/profiler/relay_loading_profiler.py --gate
 ```
 
 Run the required runtime coverage explicitly:
 
 ```powershell
-python tools/profiler/conversate_loading_profiler.py --gate --runs 1 --records 100
+python tools/profiler/relay_loading_profiler.py --gate --runs 1 --records 100
 ```
 
 Limit a run to selected operations:
 
 ```powershell
-python tools/profiler/conversate_loading_profiler.py --gate --only cli_list,cli_upsert
+python tools/profiler/relay_loading_profiler.py --gate --only cli_list,cli_upsert
 ```
 
 An empty `--only` selection fails the gate.
@@ -46,19 +46,19 @@ An empty `--only` selection fails the gate.
 Write a report somewhere explicit:
 
 ```powershell
-python tools/profiler/conversate_loading_profiler.py --gate --out $env:TEMP\conv-profile.json
+python tools/profiler/relay_loading_profiler.py --gate --out $env:TEMP\conv-profile.json
 ```
 
 Collect `cProfile` data for the skill loader, CLI help, and Codex hook:
 
 ```powershell
-python tools/profiler/conversate_loading_profiler.py --profile
+python tools/profiler/relay_loading_profiler.py --profile
 ```
 
 Write `cProfile` data to an explicit directory:
 
 ```powershell
-python tools/profiler/conversate_loading_profiler.py --profile --profile-dir $env:TEMP\conv-profiles
+python tools/profiler/relay_loading_profiler.py --profile --profile-dir $env:TEMP\conv-profiles
 ```
 
 Default budgets live in `runtime_budgets.json`. The latency gates are 100 ms

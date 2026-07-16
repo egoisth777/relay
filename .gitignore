@@ -3,15 +3,21 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# conversate semantic-search cache
+# Relay semantic-search cache
 .semble/
 
-# conversate runtime profiler output
+# Relay runtime profiler output
 tools/profiler/results/
 tools/profiler/*.prof
 tools/profiler/**/*.prof
 /.arca/
 
-# locally-installed agent skill marketplace (not conversate source)
+# locally-installed agent skill marketplace (not Relay source)
 .agents/
 skills-lock.json
+
+# Rust
+/target/
+
+# pi subagent artifacts
+/.pi-subagents/

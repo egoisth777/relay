@@ -1,18 +1,18 @@
-# Conversate resume
+# Relay resume
 
-Use this for `conversate:resume` and natural-language requests to resume or continue a previous discussion.
+Use this for `relay:resume` and natural-language requests to resume or continue a previous discussion.
 
 ## Resolve Target
 
 1. Run:
-   `python ~/.conversate/scripts/conv_cli.py search "<user query>"`
+   `~/.relay/bin/relay search "<user query>"`
 2. If exactly one confident hit returns, use it.
 3. If multiple hits return, present the ranked ids/topics and ask the user to choose.
 4. Show the resolved conversation:
-   `python ~/.conversate/scripts/conv_cli.py show <id> --markdown`
+   `~/.relay/bin/relay show <id> --markdown`
 
 The CLI implements the tiered cascade as filename/path match, `rg` over `index.jsonl`,
-then Semble over Conversation database bodies under `~/.conversate/convs/`. It uses
+then Semble over Relay archive bodies under `~/.relay/convs/`. It uses
 installed `semble` automatically, can use `uvx semble` when `CONV_USE_UVX_SEMBLE=1`, and
 otherwise falls back to built-in body scoring. If `fff` is available, prefer it manually
 for the filename layer; keep the same short-circuit behavior.
@@ -39,6 +39,6 @@ Every record is a resumption point. Read and internalize in this order:
 Also read frontmatter (identity, status, tags, refs) up front. After loading, mark the
 conversation active:
 
-`python ~/.conversate/scripts/conv_cli.py set-status <id> active`
+`~/.relay/bin/relay set-status <id> active`
 
 Then present a short summary and the open threads.

@@ -47,28 +47,28 @@ class BranchPrimitivesTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name).resolve()
         self.addCleanup(self._tmp.cleanup)
-        self.root = self.tmp / ".conversate"
-        self.assertEqual(run_cli(["init", "--conv-root", self.root], cwd=self.tmp).returncode, 0)
+        self.root = self.tmp / ".relay"
+        self.assertEqual(run_cli(["init", "--relay-root", self.root], cwd=self.tmp).returncode, 0)
         proc = run_cli(
-            ["upsert", "--stdin", "--conv-root", self.root],
+            ["upsert", "--stdin", "--relay-root", self.root],
             cwd=self.tmp,
             input=json.dumps(PARENT_PAYLOAD),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def _show(self, cid: str) -> dict:
-        proc = run_cli(["show", cid, "--conv-root", self.root], cwd=self.tmp)
+        proc = run_cli(["show", cid, "--relay-root", self.root], cwd=self.tmp)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return load_json(proc)
 
     def _markdown(self, cid: str) -> str:
-        proc = run_cli(["show", cid, "--markdown", "--conv-root", self.root], cwd=self.tmp)
+        proc = run_cli(["show", cid, "--markdown", "--relay-root", self.root], cwd=self.tmp)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 
     def _upsert(self, payload: dict) -> None:
         proc = run_cli(
-            ["upsert", "--stdin", "--conv-root", self.root],
+            ["upsert", "--stdin", "--relay-root", self.root],
             cwd=self.tmp,
             input=json.dumps(payload),
         )
@@ -82,7 +82,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "branch topic",
                 "--id",
                 "conv_260101_branch",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -105,7 +105,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "--id",
                 "conv_260101_branch",
                 "--keep-parent-active",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -124,7 +124,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "branch topic",
                 "--id",
                 "conv_260101_branch",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -148,7 +148,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "fresh parent topic",
                 "--id",
                 "conv_260101_continued",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -170,7 +170,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "fresh parent topic",
                 "--id",
                 "conv_260101_continued",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -192,7 +192,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "fresh parent topic",
                 "--id",
                 "conv_260101_continued",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -215,7 +215,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "branch topic",
                 "--id",
                 "conv_260101_branch",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -227,7 +227,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "conv_260101_branch",
                 "--digest",
                 "Explored the branch and found the answer.",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -249,7 +249,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "branch topic",
                 "--id",
                 "conv_260101_branch",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -276,7 +276,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "This must not be written.",
                 "--parent",
                 "conv_260101_unrelated-parent",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,
@@ -324,7 +324,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "conv_260101_ambiguous-branch",
                 "--digest",
                 "This ambiguous return must not be written.",
-                "--conv-root",
+                "--relay-root",
                 self.root,
             ],
             cwd=self.tmp,

@@ -1,65 +1,65 @@
 ---
-name: conversate
-description: Plugin entrypoint for the Conversate skill group. Use for conversation persistence tasks such as save this, checkpoint this, resume the auth discussion, list open conversations, park this, sidekick this, return from a branch, continue fresh, or repair/regenerate the Conversation database.
+name: relay
+description: Persistent session handoffs. Use Relay to capture a session runtime artifact, distill it into a durable record, resume it in a later session, list handoffs, park work, branch exploration, return a digest, continue fresh, or repair the Relay archive.
 ---
 
-# Conversate plugin
+# Relay plugin
 
-Use this plugin entrypoint when the user asks for a Conversate action but did not name
-one of the narrower verb skills. A record is not a transcript: it is a distilled,
-resumable artifact any agent can pick up cold. Plugin source is this repo. Installed
-plugin files live under the Plugin installation root, `~/.conversate/` by default.
-Conversation records live under the Conversation database, `~/.conversate/convs/`, which
-is the source of truth for every harness (Claude Code, pi, oh-my-pi, and Codex).
+Relay preserves momentum across sessions. It records the runtime artifact of active
+work as a compact handoff another agent can pick up cold; it does not store a raw
+transcript.
+
+Plugin source is this repository. The Plugin installation root (Relay installation
+root) is `~/.relay/` by default. The Relay archive,
+`~/.relay/convs/`, is the source of truth for every supported harness.
 
 ## Invariants
 
-- Treat `~/.conversate/convs/*.md` as the source of truth. Treat
-  `~/.conversate/index.jsonl` as a derived cache that can be deleted and rebuilt.
-- Use TOML frontmatter delimited by `+++`. Keep it thin: id, topic, status, tags, refs,
-  created, updated.
-- Every record is a resumption point. Mandatory body sections `## summary`, `## dict`,
-  `## qa`, plus the always-present resumption sections `## resume`,
-  `## user-instructions`, `## condensed-transcript` (empty ones render `(none)`).
-- Reconstruct language first: read `## dict` before `## user-instructions`, `## qa`,
-  sources, insights, or decisions.
-- Keep refs bidirectional with valued directional labels:
-  - `spawned-from` <-> `spawned-to`
-  - `continued-from` <-> `continued-as`
-  - `informed-by` <-> `informed`
-- Never mutate `## decisions` unless the user explicitly asks to edit decisions.
-  Contradictions from branches go into `## qa` as open questions.
-- Redact secrets and PII; reference artifacts (files, commits, PRs) by path or URL rather
-  than duplicating their contents.
-- Use the CLI for every write, index rebuild, status change, and ref regeneration:
-  `python ~/.conversate/scripts/conv_cli.py <command>`.
+- Treat `~/.relay/convs/*.md` as the source of truth. Treat
+  `~/.relay/index.jsonl` as a derived cache that can be rebuilt.
+- Use TOML frontmatter delimited by `+++`: id, topic, status, tags, refs, created,
+  and updated.
+- Every record is a resumption point. Required sections are `## summary`,
+  `## dict`, and `## qa`; `## resume`, `## user-instructions`, and
+  `## condensed-transcript` are always present.
+- Reconstruct language first: read `## dict` before instructions, questions, sources,
+  insights, or decisions.
+- Keep directional refs bidirectional: `spawned-from`/`spawned-to`,
+  `continued-from`/`continued-as`, and `informed-by`/`informed`.
+- Never alter `## decisions` unless the user explicitly asks. Put branch
+  contradictions into `## qa` as open questions.
+- Redact secrets and PII. Reference external artifacts by path, commit, PR, or URL
+  rather than duplicating them.
+- Use `~/.relay/bin/relay <command>` for every write, index rebuild, status change,
+  ref repair, and legacy import.
 
 ## Routing
 
-- For `conversate:save`, auto-save reminders, "save this", or "checkpoint this", read `~/.conversate/references/save.md`.
-- For `conversate:resume` or "continue where we left off", read `~/.conversate/references/resume.md`.
-- For `conversate:list`, "what's open", or recent/open conversation lists, read `~/.conversate/references/list.md`.
-- For `conversate:park`, read `~/.conversate/references/save.md` and save with status `parked`.
-- For `conversate:sidekick`, `conversate:return`, or `conversate:continue`, read `~/.conversate/references/branching.md`.
-- For `conversate:regen`, drift checks, CLI details, or implementation troubleshooting, read `~/.conversate/references/cli.md`.
+- For `relay:save`, save/checkpoint requests, or `RELAY HANDOFF` reminders, read
+  `~/.relay/references/save.md`.
+- For `relay:resume` or "continue where we left off", read
+  `~/.relay/references/resume.md`.
+- For `relay:list` or open/recent handoff lists, read `~/.relay/references/list.md`.
+- For `relay:park`, read `~/.relay/references/save.md` and save with status `parked`.
+- For `relay:sidekick`, `relay:return`, or `relay:continue`, read
+  `~/.relay/references/branching.md`.
+- For `relay:regen`, drift checks, imports, or implementation troubleshooting, read
+  `~/.relay/references/cli.md`.
 
-## Runtime Paths
+## Legacy recovery
 
-Normal operation uses the installed CLI under the Plugin installation root:
-`python ~/.conversate/scripts/conv_cli.py`. The default Conversation database is
-`~/.conversate/convs/`. A cwd-local `.conversate/` directory is only a non-default compatibility root when the user explicitly passes `--conv-root PATH`; do not teach it as the normal plugin model.
+Relay never changes `~/.conversate/` automatically. To carry forward previous
+records, run `~/.relay/bin/relay import --from ~/.conversate`. The import copies only
+missing records, reports same-name collisions, and never overwrites either archive.
 
-## Auto-Save Behavior
+## Handoff behavior
 
-If the harness injects a `CONVERSATE AUTO-SAVE: threshold reached` reminder (via hooks),
-honor it: run the `conversate:save` flow silently, infer the id and topic, write the
-checkpoint, rebuild the index, and tell the user only:
+When the harness injects a `RELAY HANDOFF: threshold reached` reminder, run the
+`relay:save` flow silently, infer the record ID and topic, rebuild the index, and tell
+the user only:
 
-`Auto-saved as <id> - rename anytime.`
+`Handed off as <id> - resume anytime.`
 
-The current marker is `CONVERSATE AUTO-SAVE`; older hooks emitted `CONV AUTO-SAVE`. Treat
-either form as the same reminder for backward compatibility.
-
-In harnesses without hooks, self-trigger the same save at natural milestones, on topic
-shifts, and before the session ends. Do not block the user's current task for
+In harnesses without hooks, create the same handoff at natural milestones, topic
+changes, and before a session ends. Do not block the user's current task for
 confirmation.

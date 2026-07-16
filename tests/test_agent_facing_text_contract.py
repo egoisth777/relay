@@ -17,7 +17,7 @@ STATIC_TEXT_FILES = [
     "README.md",
     "SKILL.md",
     "hooks/README.md",
-    "skills/conversate/SKILL.md",
+    "skills/relay/SKILL.md",
     ".claude-plugin/plugin.json",
     ".claude-plugin/marketplace.json",
     ".codex-plugin/plugin.json",
@@ -40,29 +40,29 @@ DIRECT_COMMON_PATH_SKILLS = {
 
 DIRECT_COMMON_PATH_COMMANDS = {
     "save": (
-        "python ~/.conversate/scripts/conv_cli.py init",
-        "python ~/.conversate/scripts/conv_cli.py upsert --stdin",
+        "~/.relay/bin/relay init",
+        "~/.relay/bin/relay upsert --stdin",
     ),
     "list": (
-        "python ~/.conversate/scripts/conv_cli.py list --limit 10",
+        "~/.relay/bin/relay list --limit 10",
     ),
     "resume": (
-        "python ~/.conversate/scripts/conv_cli.py search",
-        "python ~/.conversate/scripts/conv_cli.py show",
-        "python ~/.conversate/scripts/conv_cli.py set-status",
+        "~/.relay/bin/relay search",
+        "~/.relay/bin/relay show",
+        "~/.relay/bin/relay set-status",
     ),
     "park": (
-        "python ~/.conversate/scripts/conv_cli.py init",
-        "python ~/.conversate/scripts/conv_cli.py upsert --stdin --status parked",
+        "~/.relay/bin/relay init",
+        "~/.relay/bin/relay upsert --stdin --status parked",
     ),
     "sidekick": (
-        "python ~/.conversate/scripts/conv_cli.py sidekick",
+        "~/.relay/bin/relay sidekick",
     ),
     "continue": (
-        "python ~/.conversate/scripts/conv_cli.py continue",
+        "~/.relay/bin/relay continue",
     ),
     "return": (
-        "python ~/.conversate/scripts/conv_cli.py return",
+        "~/.relay/bin/relay return",
     ),
 }
 
@@ -151,7 +151,7 @@ def plugin_skill_files() -> list[Path]:
 
 
 def plugin_verb_skill_names() -> set[str]:
-    return {path.parent.name for path in plugin_skill_files()} - {"conversate"}
+    return {path.parent.name for path in plugin_skill_files()} - {"relay"}
 
 
 def direct_common_path_skill_files() -> list[Path]:
@@ -183,11 +183,11 @@ def hook_prompt_texts() -> Iterator[tuple[Path, str]]:
             for value in _json_strings(data):
                 yield path, value
 
-        for path in sorted(root.rglob("conv-turn-counter.ps1")):
+        for path in sorted(root.rglob("relay-turn-counter.ps1")):
             for match in re.finditer(r'Write-Output\s+"([^"]+)"', text_for(path)):
                 yield path, match.group(1)
 
-        for path in sorted(root.rglob("conv_turn_counter.py")):
+        for path in sorted(root.rglob("relay_turn_counter.py")):
             tree = ast.parse(text_for(path))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Assign):
@@ -198,7 +198,7 @@ def hook_prompt_texts() -> Iterator[tuple[Path, str]]:
                 if isinstance(value, str):
                     yield path, value
 
-        for path in sorted(root.rglob("conv-turn-counter.ts")):
+        for path in sorted(root.rglob("relay-turn-counter.ts")):
             text = text_for(path)
             match = re.search(r"const\s+REMINDER\s*=\s*(.*?);", text, re.DOTALL)
             if match:
@@ -212,21 +212,21 @@ def test_agent_text_names_the_runtime_model_terms_and_paths() -> None:
         "Plugin source",
         "universal installation root",
         "Plugin installation root",
-        "canonical installed plugin root",
+        "canonical installed Relay plugin",
         "canonical hook root",
         "real agent config surface",
-        "Conversation database",
-        "~/.conversate/",
-        "~/.conversate/conv/",
-        "~/.conversate/hooks/",
-        "~/.conversate/convs/",
+        "Relay archive",
+        "~/.relay/",
+        "~/.relay/relay/",
+        "~/.relay/hooks/",
+        "~/.relay/convs/",
         "~/.codex/",
         "~/.claude/",
     ):
         assert required in corpus
 
-    assert "python ~/.conversate/scripts/conv_cli.py" in corpus
-    assert "python .conversate/scripts/conv_cli.py" not in corpus
+    assert "~/.relay/bin/relay" in corpus
+    assert "python ~/.relay/scripts/conv_cli.py" not in corpus
 
 
 def test_every_shipped_skill_file_names_the_runtime_model() -> None:
@@ -235,8 +235,8 @@ def test_every_shipped_skill_file_names_the_runtime_model() -> None:
         for required in (
             "Plugin source",
             "Plugin installation root",
-            "Conversation database",
-            "~/.conversate/",
+            "Relay archive",
+            "~/.relay/",
         ):
             assert required in text, f"{path.relative_to(ROOT)} is missing {required!r}"
 
@@ -244,19 +244,19 @@ def test_every_shipped_skill_file_names_the_runtime_model() -> None:
 def test_agent_text_avoids_old_path_model_and_terms() -> None:
     forbidden = (
         "conversation store",
-        ".conversate store",
+        ".relay store",
         "runtime store",
         "data root",
         "active store",
         "payload",
         "bundle",
-        "<cwd>/.conversate",
-        "CONVERSATE_ROOT",
+        "<cwd>/.relay",
+        "RELAY_ROOT",
         "BRAIN_CONV",
-        "~/.conversate/.agents/skills/conv",
-        "~/.conversate/.claude/skills/conv",
-        "~/.conversate/.codex/hooks.json",
-        "~/.conversate/.claude/settings.json",
+        "~/.relay/.agents/skills/conv",
+        "~/.relay/.claude/skills/conv",
+        "~/.relay/.codex/hooks.json",
+        "~/.relay/.claude/settings.json",
         "<plugin-root>/.codex/hooks.json",
         "<plugin-root>/.claude/settings.json",
     )
@@ -290,7 +290,7 @@ def _common_path_text(path: Path) -> str:
 
 def _pre_first_cli_action_text(path: Path) -> str:
     common = _common_path_text(path)
-    cli = "python ~/.conversate/scripts/conv_cli.py"
+    cli = "~/.relay/bin/relay"
     assert cli in common, f"{path.relative_to(ROOT)} has no CLI action in the common path"
     return common.split(cli, 1)[0]
 
@@ -303,13 +303,13 @@ def test_agent_facing_skill_frontmatter_is_valid_yaml_with_required_scalars() ->
             assert isinstance(value, str) and value.strip(), (
                 f"{path.relative_to(ROOT)} frontmatter {key!r} must be a non-empty string"
             )
-        expected_name = "conversate" if path == ROOT / "SKILL.md" else path.parent.name
+        expected_name = "relay" if path == ROOT / "SKILL.md" else path.parent.name
         assert frontmatter["name"] == expected_name, (
             f"{path.relative_to(ROOT)} frontmatter name must match "
-            f"{'the plugin name conversate (root entrypoint)' if path == ROOT / 'SKILL.md' else 'its containing folder'}"
+            f"{'the plugin name relay (root entrypoint)' if path == ROOT / 'SKILL.md' else 'its containing folder'}"
         )
 
-        if path.parent.parent.name == "skills" and frontmatter["name"] != "conversate":
+        if path.parent.parent.name == "skills" and frontmatter["name"] != "relay":
             value = frontmatter.get("disable-model-invocation")
             assert isinstance(value, bool), (
                 f"{path.relative_to(ROOT)} frontmatter 'disable-model-invocation' must be a YAML boolean"
@@ -326,8 +326,8 @@ def test_direct_common_paths_do_not_front_load_broad_docs() -> None:
         path = ROOT / rel_path
         common = _common_path_text(path)
         assert "Do not load broad instructions for the common path" in common
-        assert "~/.conversate/references/" not in common
-        assert "~/.conversate/SKILL.md" not in text_for(path)
+        assert "~/.relay/references/" not in common
+        assert "~/.relay/SKILL.md" not in text_for(path)
         assert "follow it exactly" not in common
         for command in DIRECT_COMMON_PATH_COMMANDS[verb]:
             assert command in common, f"{rel_path} does not teach {command!r}"
@@ -335,7 +335,7 @@ def test_direct_common_paths_do_not_front_load_broad_docs() -> None:
 
 def test_pre_action_common_paths_do_not_reference_broad_docs_by_relative_or_bare_paths() -> None:
     forbidden = (
-        re.compile(r"(?<!~/.conversate/)references/[\w*.-]+\.md"),
+        re.compile(r"(?<!~/.relay/)references/[\w*.-]+\.md"),
         re.compile(r"\.\./references(?:/|$)"),
         re.compile(r"\bSKILL\.md\b"),
     )
@@ -351,9 +351,9 @@ def test_direct_references_are_lazy_after_first_cli_action() -> None:
     for rel_path in DIRECT_COMMON_PATH_SKILLS.values():
         path = ROOT / rel_path
         text = text_for(path)
-        first_cli = text.index("python ~/.conversate/scripts/conv_cli.py")
+        first_cli = text.index("~/.relay/bin/relay")
         lazy_refs = text.index("## Lazy References")
-        first_reference = text.index("~/.conversate/references/")
+        first_reference = text.index("~/.relay/references/")
         lazy_text = text[lazy_refs:]
         assert first_cli < first_reference
         assert lazy_refs < first_reference
@@ -370,18 +370,18 @@ def test_direct_branch_common_paths_use_primitives_not_manual_record_flows() -> 
 
 
 def test_agent_text_never_teaches_repo_local_convs_as_default_database() -> None:
-    local_convs = re.compile(r"(?<!~/)\.conversate[/\\]convs", re.IGNORECASE)
-    local_cli = re.compile(r"python\s+\.conversate[/\\]scripts[/\\]conv_cli\.py", re.IGNORECASE)
+    local_convs = re.compile(r"(?<!~/)\.relay[/\\]convs", re.IGNORECASE)
+    local_cli = re.compile(r"(?<!~/)\.relay[/\\]bin[/\\]relay(?:\.exe)?", re.IGNORECASE)
     for path in covered_files():
         text = text_for(path)
         assert not local_convs.search(text), f"{path.relative_to(ROOT)} mentions repo-local convs/"
-        assert not local_cli.search(text), f"{path.relative_to(ROOT)} mentions repo-local conv_cli.py"
+        assert not local_cli.search(text), f"{path.relative_to(ROOT)} mentions repo-local relay binary"
 
 
 def test_hook_snippets_and_reminders_do_not_teach_the_old_root_model() -> None:
     forbidden = (
-        "python .conversate",
-        "<cwd>/.conversate",
+        "python .relay",
+        "<cwd>/.relay",
         "cwd-local",
         "repo-local",
         "project-local",
@@ -396,18 +396,18 @@ def test_hook_snippets_and_reminders_do_not_teach_the_old_root_model() -> None:
         lowered = prompt_text.lower()
         for phrase in forbidden:
             assert phrase not in lowered, f"{path.relative_to(ROOT)} prompt text contains {phrase!r}"
-        if "conv-turn-counter" in prompt_text or "conv_turn_counter" in prompt_text:
-            assert "~/.conversate/hooks/" in prompt_text or "hooks/" in prompt_text
-        if "CONVERSATE AUTO-SAVE" in prompt_text:
-            assert "Conversate plugin" in prompt_text
-            assert "/conversate:save" in prompt_text
+        if "relay-turn-counter" in prompt_text or "relay_turn_counter" in prompt_text:
+            assert "~/.relay/hooks/" in prompt_text or "hooks/" in prompt_text
+        if "RELAY HANDOFF" in prompt_text:
+            assert "Relay plugin" in prompt_text
+            assert "/relay:save" in prompt_text
             assert "consider saving" not in lowered
     assert seen, "expected hook prompt-facing text to be checked"
 
 
 def test_legacy_conv_auto_save_marker_is_only_documented_as_compatibility() -> None:
     """The old CONV AUTO-SAVE marker may remain only as explicit legacy
-    compatibility; the current emitted marker is CONVERSATE AUTO-SAVE."""
+    compatibility; the current emitted marker is RELAY HANDOFF."""
     legacy_words = ("legacy", "compatibility", "older", "previously")
     offenders = []
     for path in covered_files():
@@ -422,18 +422,18 @@ def test_legacy_conv_auto_save_marker_is_only_documented_as_compatibility() -> N
     )
 
 
-def test_cwd_local_conversate_is_only_documented_as_compatibility() -> None:
+def test_cwd_local_relay_is_only_documented_as_compatibility() -> None:
     for path in covered_files():
         for line in text_for(path).splitlines():
-            if "cwd-local `.conversate/`" in line:
+            if "cwd-local `.relay/`" in line:
                 assert "non-default" in line and "compatibility" in line
 
 
 def test_conversation_database_is_not_named_as_the_root() -> None:
     bad_phrasings = (
-        "Conversation database is `~/.conversate/`",
-        "Conversation database at `~/.conversate/`",
-        "Conversation database under `~/.conversate/`",
+        "Relay archive is `~/.relay/`",
+        "Relay archive at `~/.relay/`",
+        "Relay archive under `~/.relay/`",
     )
     for path in covered_files():
         text = text_for(path)

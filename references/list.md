@@ -1,16 +1,16 @@
-# Conversate list
+# Relay list
 
-Use this for `conversate:list`, "what's open", and recent conversation requests.
+Use this for `relay:list`, "what's open", and recent conversation requests.
 
 ## Commands
 
 - Active, parked, then recent closed:
-  `python ~/.conversate/scripts/conv_cli.py list --limit 10`
+  `~/.relay/bin/relay list --limit 10`
 - JSON for further filtering:
-  `python ~/.conversate/scripts/conv_cli.py list --json --limit 50`
+  `~/.relay/bin/relay list --json --limit 50`
 - Filter one status:
-  `python ~/.conversate/scripts/conv_cli.py list --status active --limit 20`
+  `~/.relay/bin/relay list --status active --limit 20`
 
-The list command reads only the derived index at `~/.conversate/index.jsonl`. It does not
-read Conversation database markdown files directly. The `open` column is a derived cache
+The list command reads only the derived index at `~/.relay/index.jsonl`. It does not
+read Relay archive markdown files directly. The `open` column is a derived cache
 count rebuilt from `## qa` whenever the index is rebuilt.

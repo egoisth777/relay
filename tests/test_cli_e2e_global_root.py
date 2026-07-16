@@ -6,6 +6,7 @@ runtime path users run while keeping the real home directory untouched.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -42,8 +43,9 @@ def run_installed_cli(
     env: dict[str, str],
     input: str | None = None,
 ) -> subprocess.CompletedProcess:
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
     return subprocess.run(
-        [sys.executable, str(root / "scripts" / "conv_cli.py"), *map(str, args)],
+        [str(binary), *map(str, args)],
         cwd=str(cwd),
         env=env,
         capture_output=True,
@@ -65,7 +67,7 @@ def conversation_payload(*, summary_marker: str, resume_goal: str, updated: str)
                 "goal": resume_goal,
                 "next_steps": ["List, search, show, and rebuild from the global database"],
                 "open_questions": ["none"],
-                "suggested_skills": ["conversate:resume"],
+                "suggested_skills": ["relay:resume"],
             },
             "user_instructions": [
                 "Use isolated HOME and USERPROFILE",
@@ -74,7 +76,7 @@ def conversation_payload(*, summary_marker: str, resume_goal: str, updated: str)
             "condensed_transcript": [
                 {
                     "u": "Save the global-root smoke record.",
-                    "a": "Saved under the Conversation database.",
+                    "a": "Saved under the Relay archive.",
                 },
                 {
                     "u": "Update it and keep it resumable.",
@@ -85,14 +87,14 @@ def conversation_payload(*, summary_marker: str, resume_goal: str, updated: str)
                 "summary": f"{summary_marker} summary from the installed CLI",
                 "dict": "- **global-root** - default Plugin installation root",
                 "qa": "- **Q (open):** Can this resume after rebuild? **A:** yes.",
-                "decisions": "- Default commands use ~/.conversate/convs.",
+                "decisions": "- Default commands use ~/.relay/convs.",
             },
         }
     )
 
 
 def plant_local_decoy(work: Path) -> None:
-    local_db = work / ".conversate" / "convs"
+    local_db = work / ".relay" / "convs"
     local_db.mkdir(parents=True)
     (work / ".conv-root").write_text("", encoding="utf-8")
     (work / "conv").mkdir()
@@ -136,13 +138,13 @@ class InstalledGlobalRootE2ESmokeTest(unittest.TestCase):
         self.work = self.tmp / "workspace"
         self.work.mkdir()
         self.env = clean_env(home=self.home)
-        self.root = self.home / ".conversate"
+        self.root = self.home / ".relay"
         self.db = self.root / "convs"
         self.addCleanup(self._tmp.cleanup)
 
         install = run_install(["--agents", "codex"], cwd=self.work, env=self.env)
         self.assertEqual(install.returncode, 0, install.stderr + install.stdout)
-        self.assertTrue((self.root / "scripts" / "conv_cli.py").is_file())
+        self.assertTrue((self.root / "bin" / ("relay.exe" if os.name == "nt" else "relay")).is_file())
 
     def cli(self, args, *, input: str | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
         return run_installed_cli(self.root, args, cwd or self.work, self.env, input=input)
@@ -312,10 +314,10 @@ class InstalledGlobalRootE2ESmokeTest(unittest.TestCase):
 
     def test_installed_doctor_fix_runs_bundled_installer_repair(self) -> None:
         self.assertTrue((self.root / "scripts" / "install.py").is_file())
-        self.assertFalse((self.root / ".conversate-repair-source").exists())
+        self.assertFalse((self.root / ".relay-repair-source").exists())
 
-        root_hook = self.root / "hooks" / "codex" / "conv_turn_counter.py"
-        root_hook.write_text("STALE HOOK\n", encoding="utf-8")
+        obsolete_hook = self.root / "hooks" / "codex" / "relay_turn_counter.py"
+        obsolete_hook.write_text("STALE HOOK\n", encoding="utf-8")
 
         doctor = self.cli(["doctor", "--fix"])
         self.assertEqual(doctor.returncode, 0, doctor.stderr)
@@ -325,11 +327,11 @@ class InstalledGlobalRootE2ESmokeTest(unittest.TestCase):
         self.assertEqual(installer["returncode"], 0, installer)
         self.assertEqual(Path(installer["command"][1]), self.root / "scripts" / "install.py")
 
-        self.assertNotIn("STALE HOOK", root_hook.read_text(encoding="utf-8"))
+        self.assertFalse(obsolete_hook.exists())
         self.assertTrue((self.home / ".codex" / "hooks.json").is_file())
 
     def test_installed_doctor_fix_reports_missing_installer_artifacts(self) -> None:
-        manifest = self.root / "conversate" / ".claude-plugin" / "plugin.json"
+        manifest = self.root / "relay" / ".claude-plugin" / "plugin.json"
         self.assertTrue(manifest.is_file())
         manifest.unlink()
 

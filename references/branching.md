@@ -1,6 +1,6 @@
-# Conversate branching
+# Relay branching
 
-Use this only after the direct `conversate:sidekick`, `conversate:return`, or `conversate:continue`
+Use this only after the direct `relay:sidekick`, `relay:return`, or `relay:continue`
 common path needs advanced branch behavior. The common path is the deterministic CLI
 primitive for each action; do not hand-build refs or statuses for normal branch work.
 
@@ -12,7 +12,7 @@ primitive for each action; do not hand-build refs or statuses for normal branch 
    - `sidekick`: default. Create a peer conversation through the sidekick primitive.
    - Same-session organize branches are non-protecting convenience only; do not use as default.
 3. Create the sidekick conversation:
-   `python ~/.conversate/scripts/conv_cli.py sidekick <parent-id-or-query> "<topic>"`
+   `~/.relay/bin/relay sidekick <parent-id-or-query> "<topic>"`
 4. Add `--keep-parent-active` only when the user explicitly wants the parent to stay active. Add `--id <new-id>` only for scripted stable ids.
 5. Include parent summary and decisions as context for the work, not as mutable branch decisions.
 
@@ -22,7 +22,7 @@ primitive for each action; do not hand-build refs or statuses for normal branch 
 2. Generate a digest covering what was explored, conclusions, useful files/patterns, contradictions, and next steps.
 3. Put unresolved contradictions in the digest as explicit open questions.
 4. Close the branch through the return primitive:
-   `python ~/.conversate/scripts/conv_cli.py return <branch-id-or-query> --digest "<digest>"`
+   `~/.relay/bin/relay return <branch-id-or-query> --digest "<digest>"`
 5. Add `--parent <parent-id>` only when the branch has ambiguous parent refs.
 6. If the parent is live, inject the digest into the current context. If parked, rely on the parent's next resume to surface the closed branch through refs.
 
@@ -32,8 +32,8 @@ Use this when the user wants the same topic in a clean session, not a side explo
 
 1. Resolve the parent conversation id or query.
 2. Create the new active continuation:
-   `python ~/.conversate/scripts/conv_cli.py continue <parent-id-or-query>`
+   `~/.relay/bin/relay continue <parent-id-or-query>`
 3. If the user provides a clean topic, pass it explicitly:
-   `python ~/.conversate/scripts/conv_cli.py continue <parent-id-or-query> --topic "<topic>"`
+   `~/.relay/bin/relay continue <parent-id-or-query> --topic "<topic>"`
 4. Add `--id <new-id>` only for scripted stable ids.
 5. Let the CLI park the parent, carry forward recovery sections, add reverse refs, and rebuild the index.

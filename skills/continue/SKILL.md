@@ -1,11 +1,11 @@
 ---
 name: continue
-description: Continue a conversation fresh as a new linked record in the Conversation database.
+description: Continue a conversation fresh as a new linked record in the Relay archive.
 disable-model-invocation: false
 argument-hint: "[parent] [topic]"
 ---
 
-Run the Conversate `conversate:continue` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.conversate/` by default) and writes records to the Conversation database (`~/.conversate/convs/`).
+Run the Relay `relay:continue` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.relay/` by default) and writes records to the Relay archive (`~/.relay/convs/`).
 
 Do not load broad instructions for the common path; this file is enough to continue a normal conversation in a fresh record.
 
@@ -14,19 +14,19 @@ Do not load broad instructions for the common path; this file is enough to conti
 1. Resolve the parent from the current conversation id or the first clear id/query in `$ARGUMENTS`. If no parent can be inferred, ask once for the conversation to continue.
 2. Use a supplied topic only when the user gives one; otherwise let the CLI derive the continuation topic from the parent.
 3. Create the continuation with the deterministic primitive:
-   `python ~/.conversate/scripts/conv_cli.py continue <parent-id-or-query>`
+   `~/.relay/bin/relay continue <parent-id-or-query>`
 4. When a user supplied a clean topic, pass it explicitly:
-   `python ~/.conversate/scripts/conv_cli.py continue <parent-id-or-query> --topic "<topic>"`
+   `~/.relay/bin/relay continue <parent-id-or-query> --topic "<topic>"`
 5. Add `--id <new-id>` only when a scripted caller needs a stable id. Report the new id and parent status returned by the CLI.
 
 ## Required Rules
 
-- Treat `~/.conversate/convs/*.md` as source of truth and `~/.conversate/index.jsonl` as a derived cache.
+- Treat `~/.relay/convs/*.md` as source of truth and `~/.relay/index.jsonl` as a derived cache.
 - Do not hand-edit records or build continuation refs yourself for the common path; the continue primitive parks the parent, creates the child, carries recovery sections, reconciles refs, and rebuilds the index.
-- Use `conversate:sidekick` instead when the user wants a side exploration rather than the same topic in a clean record.
+- Use `relay:sidekick` instead when the user wants a side exploration rather than the same topic in a clean record.
 
 ## Lazy References
 
-Only after the common continue command needs advanced branch behavior, read `~/.conversate/references/branching.md`. Examples: sidekick-vs-continue intent, stable scripted ids, parent query ambiguity, or recovery-section carry-forward details.
+Only after the common continue command needs advanced branch behavior, read `~/.relay/references/branching.md`. Examples: sidekick-vs-continue intent, stable scripted ids, parent query ambiguity, or recovery-section carry-forward details.
 
 $ARGUMENTS

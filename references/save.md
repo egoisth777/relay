@@ -1,11 +1,11 @@
-# Conversate save and park
+# Relay save and park
 
-Use this for `conversate:save`, `conversate:park`, auto-save reminders, and natural-language checkpoint requests.
+Use this for `relay:save`, `relay:park`, auto-save reminders, and natural-language checkpoint requests.
 
 ## Steps
 
-1. Ensure the Plugin installation root and Conversation database exist:
-   `python ~/.conversate/scripts/conv_cli.py init`
+1. Ensure the Plugin installation root and Relay archive exist:
+   `~/.relay/bin/relay init`
 2. Infer a concise topic and tags from the current conversation.
 3. Extract state in this priority order (highest value first):
    - `dict`: terms coined or agreed on, with meanings. This is the highest-value section
@@ -20,8 +20,8 @@ Use this for `conversate:save`, `conversate:park`, auto-save reminders, and natu
    - `sources` / `insights` / `decisions`: files and contexts used, realizations worth
      keeping, and only settled decisions with reasoning.
 4. Write the conversation JSON (shape below) and pipe it to:
-   `python ~/.conversate/scripts/conv_cli.py upsert --stdin`
-   Use `--status parked` for `conversate:park`.
+   `~/.relay/bin/relay upsert --stdin`
+   Use `--status parked` for `relay:park`.
 5. The CLI writes the TOML markdown, always renders the resumption sections (empty ones
    become `(none)`), reconciles reverse refs, and rebuilds `index.jsonl`.
 6. For manual saves, present the inferred id/topic and invite rename. For auto-save, only
@@ -48,7 +48,7 @@ Use this for `conversate:save`, `conversate:park`, auto-save reminders, and natu
     "summary": "One line describing what this conversation is.",
     "dict": "- **term** - agreed meaning.",
     "qa": "- **Q:** question? **A:** answer.\n- **Q (open):** unresolved question?",
-    "sources": "- file: path/to/file\n- skill: conversate",
+    "sources": "- file: path/to/file\n- skill: relay",
     "insights": "- Useful realization.",
     "decisions": "1. Decision and reasoning."
   },
@@ -56,12 +56,12 @@ Use this for `conversate:save`, `conversate:park`, auto-save reminders, and natu
     "goal": "Ship the redesigned engine and docs.",
     "next_steps": ["update tests", "rewrite SKILL.md"],
     "open_questions": ["how do pi/codex adapters register hooks?"],
-    "suggested_skills": ["conversate:save", "conversate:resume"]
+    "suggested_skills": ["relay:save", "relay:resume"]
   },
   "user_instructions": ["use PowerShell on Windows", "never git commit without asking"],
   "condensed_transcript": [
-    {"u": "redesign conversate", "a": "read the engine, planned the changes"},
-    {"u": "make it agent-agnostic", "a": "moved records to ~/.conversate/convs/ (see scripts/conv_cli.py)"}
+    {"u": "redesign relay", "a": "read the engine, planned the changes"},
+    {"u": "make it agent-agnostic", "a": "moved records to ~/.relay/convs/ (see the installed CLI)"}
   ]
 }
 ```

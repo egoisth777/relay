@@ -3,8 +3,8 @@
 Mirrors tests/_util.py: drives the real installer via subprocess in a cleaned env
 against pytest tmp_path targets, so it exercises exactly what a user runs. Asserts
 on installer-owned artifacts (plugin files, plugin skill groups, hook files) which stay
-stable even while the conv_cli.py engine is refactored in parallel; the
-Conversation database layout is checked without shelling through engine internals.
+stable while the Rust CLI implementation evolves. The Relay archive layout is
+checked without shelling through engine internals.
 
 Run: python -m pytest tests/test_install.py -q
 """
@@ -35,20 +35,22 @@ import install as install_mod  # noqa: E402
 
 LEGACY_CLAUDE_LINK = (".claude", "skills", "conversate")
 LEGACY_AGENTS_LINK = (".agents", "skills", "conversate")
-CANONICAL_PLUGIN = ("conversate",)
-# Prior canonical installed plugin root (<root>/conv); legacy migration/cleanup only.
+CANONICAL_PLUGIN = ("relay",)
+# Prior canonical installed plugin root (<root>/conv); retained as a preserved legacy alias.
 LEGACY_CANONICAL_PLUGIN = ("conv",)
 LEGACY_CLAUDE_PLUGIN = (".claude", "skills", "conv")
 LEGACY_AGENTS_PLUGIN = (".agents", "skills", "conv")
-PI_HOOK = (".pi", "agent", "extensions", "conv-turn-counter.ts")
-OMP_HOOK = (".omp", "hooks", "pre", "conv-turn-counter.ts")
+PI_HOOK = (".pi", "agent", "extensions", "relay-turn-counter.ts")
+OMP_HOOK = (".omp", "hooks", "pre", "relay-turn-counter.ts")
 # The shared conv plugin skill group.
-CONV_SKILLS = ("conversate", "save", "resume", "list", "park", "sidekick", "return", "continue", "regen")
+RELAY_SKILLS = ("relay", "save", "resume", "list", "park", "sidekick", "return", "continue", "regen")
 
 
 def run_install(args, cwd=None, env=None) -> subprocess.CompletedProcess:
     if env is None:
         env = clean_env()
+    env["RUSTUP_HOME"] = str(Path.home() / ".rustup")
+    env["CARGO_HOME"] = str(Path.home() / ".cargo")
     if cwd is None:
         cwd = REPO_ROOT
     return subprocess.run(
@@ -154,8 +156,11 @@ def codex_hook_entries(root: Path, *, home: Path | None = None) -> list[dict]:
     return json_hook_entries(codex_home / "hooks.json")
 
 
-def conversate_codex_hook(root: Path, *, home: Path | None = None) -> dict:
-    return next(entry for entry in codex_hook_entries(root, home=home) if "conv_turn_counter" in json.dumps(entry))
+def relay_codex_hook(root: Path, *, home: Path | None = None) -> dict:
+    return next(
+        entry for entry in codex_hook_entries(root, home=home)
+        if entry.get("x-installed-by") == "relay"
+    )
 
 
 def claude_hook_entries(root: Path, *, home: Path | None = None) -> list[dict]:
@@ -175,30 +180,33 @@ def bak_files(root: Path) -> list[str]:
 def stale_codex_hook(root: Path, *, home: Path | None = None) -> None:
     dest = (home / ".codex" / "hooks.json") if home is not None else codex_hooks_path(root)
     data = json.loads(dest.read_text(encoding="utf-8"))
-    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = "python stale/conv_turn_counter.py"
-    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["commandWindows"] = "python stale\\conv_turn_counter.py"
+    hook = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    hook["command"] = "relay-stale/bin/relay hook --agent codex"
+    hook["commandWindows"] = "& 'relay-stale/bin/relay.exe' 'hook' '--agent' 'codex'"
     dest.write_text(json.dumps(data), encoding="utf-8")
 
 
 def stale_claude_hook(root: Path, *, home: Path | None = None) -> None:
     dest = (home / ".claude" / "settings.json") if home is not None else claude_settings_path(root)
     data = json.loads(dest.read_text(encoding="utf-8"))
-    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = (
-        "pwsh -NoProfile -File stale/conv-turn-counter.ps1"
-    )
+    hook = data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+    hook["command"] = "relay-stale/bin/relay.exe"
+    hook["args"] = ["hook", "--agent", "claude"]
     dest.write_text(json.dumps(data), encoding="utf-8")
 
 
 def write_stale_owned_raw_hook(path: Path) -> None:
-    path.write_text("conversate stale conv-turn-counter hook\n", encoding="utf-8")
+    path.write_text("relay stale relay-turn-counter hook\n", encoding="utf-8")
 
 
 def assert_stale_hook_targets_removed(command: str) -> None:
     for target in (
-        "stale/conv_turn_counter.py",
-        "stale\\conv_turn_counter.py",
-        "stale/conv-turn-counter.ps1",
-        "stale\\conv-turn-counter.ps1",
+        "stale/relay_turn_counter.py",
+        "stale\\relay_turn_counter.py",
+        "stale/relay-turn-counter.ps1",
+        "stale\\relay-turn-counter.ps1",
+        "relay-stale/bin/relay",
+        "relay-stale/bin/relay.exe",
     ):
         assert target not in command
 
@@ -213,12 +221,13 @@ def assert_installed(target: Path) -> None:
     conv = target
     # plugin files (installer-owned)
     assert (conv / "SKILL.md").is_file()
-    assert (conv / "scripts" / "conv_cli.py").is_file()
+    binary = conv / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert binary.is_file()
     assert (conv / "scripts" / "install.py").is_file()
     assert (conv / "references").is_dir()
     assert (conv / "hooks").is_dir()
-    assert not (conv / ".conversate-repair-source").exists()
-    # Conversation database
+    assert not (conv / ".relay-repair-source").exists()
+    # Relay archive
     assert (conv / "convs").is_dir()
     assert (conv / "index.jsonl").exists()
     assert (conv / ".semble").is_dir()
@@ -230,7 +239,7 @@ def assert_installed(target: Path) -> None:
     assert (plugin / "SKILL.md").is_file()
     assert (plugin / ".claude-plugin" / "plugin.json").is_file()
     assert (plugin / ".codex-plugin" / "plugin.json").is_file()
-    for skill in CONV_SKILLS:
+    for skill in RELAY_SKILLS:
         assert (plugin / "skills" / skill / "SKILL.md").is_file()
     # legacy nested plugin/link paths must not be created on fresh install
     for parts in (LEGACY_CLAUDE_LINK, LEGACY_AGENTS_LINK):
@@ -249,13 +258,13 @@ def test_fresh_install_creates_plugin_root_database_and_plugins(tmp_path):
 
 def test_default_install_uses_home_plugin_installation_root(tmp_path):
     home = tmp_path / "home"
-    root = home / ".conversate"
+    root = home / ".relay"
     proc = install_default(home)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert f"plugin_installation_root = {root.resolve()}" in proc.stdout.splitlines()
     assert f"conversation_database = {(root / 'convs').resolve()}" in proc.stdout.splitlines()
     assert_installed(root)
-    assert not (tmp_path / ".conversate").exists()
+    assert not (tmp_path / ".relay").exists()
 
 
 def test_target_is_plugin_installation_root_itself_not_parent(tmp_path):
@@ -264,8 +273,57 @@ def test_target_is_plugin_installation_root_itself_not_parent(tmp_path):
     proc = install_into(root)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert_installed(root)
-    assert not (root / ".conversate").exists()
-    assert not (parent / ".conversate").exists()
+    assert not (root / ".relay").exists()
+    assert not (parent / ".relay").exists()
+
+
+def test_installer_never_touches_legacy_conversate_data_plugins_or_conv_aliases(tmp_path):
+    home = tmp_path / "home"
+    legacy_root = home / ".conversate"
+    legacy_record = legacy_root / "convs" / "2026-07-04_legacy.md"
+    legacy_record.parent.mkdir(parents=True)
+    legacy_record.write_bytes(b"legacy record bytes\r\n")
+    legacy_plugin = home / ".claude" / "skills" / "conversate" / "SKILL.md"
+    legacy_plugin.parent.mkdir(parents=True)
+    legacy_plugin.write_bytes(b"legacy Conversate plugin\n")
+    legacy_alias = home / ".codex" / "skills" / "conv" / "SKILL.md"
+    legacy_alias.parent.mkdir(parents=True)
+    legacy_alias.write_bytes(b"legacy conv alias\n")
+    legacy_hook_config = home / ".codex" / "hooks.json"
+    legacy_hook_config.write_bytes(
+        b'{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"conversate hook"}]}]}}\n'
+    )
+    legacy_claude_config = home / ".claude" / "settings.json"
+    legacy_claude_config.write_bytes(
+        b'{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"conversate hook"}]}]}}\n'
+    )
+    expected = {
+        legacy_record: legacy_record.read_bytes(),
+        legacy_plugin: legacy_plugin.read_bytes(),
+        legacy_alias: legacy_alias.read_bytes(),
+        legacy_hook_config: legacy_hook_config.read_bytes(),
+        legacy_claude_config: legacy_claude_config.read_bytes(),
+    }
+
+    for args in ((), ("--update",), ("--repair", "--hooks", "none"), ("--uninstall",)):
+        proc = install_default(home, *args)
+        assert proc.returncode == 0, proc.stderr + proc.stdout
+        for path, contents in expected.items():
+            assert path.read_bytes() == contents
+
+
+def test_installer_refuses_the_legacy_conversate_archive_as_target(tmp_path):
+    home = tmp_path / "home"
+    legacy_root = home / ".conversate"
+    legacy_root.mkdir(parents=True)
+    sentinel = legacy_root / "convs" / "2026-07-04_legacy.md"
+    sentinel.parent.mkdir()
+    sentinel.write_bytes(b"legacy archive must remain untouched\n")
+
+    proc = run_install(["--target", str(legacy_root)], env=clean_env(home=home))
+    assert proc.returncode == 2
+    assert "refusing to use the legacy Conversate archive" in proc.stderr
+    assert sentinel.read_bytes() == b"legacy archive must remain untouched\n"
 
 
 def test_rerun_is_idempotent_no_bak_spam(tmp_path):
@@ -286,22 +344,22 @@ def test_status_reports_present_on_installed(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert f"universal_installation_root = {tmp_path}" in proc.stdout.splitlines()
     assert f"plugin_installation_root = {tmp_path}" in proc.stdout.splitlines()
-    assert f"canonical_plugin_root = {tmp_path / 'conversate'}" in proc.stdout.splitlines()
+    assert f"canonical_plugin_root = {tmp_path / 'relay'}" in proc.stdout.splitlines()
     assert f"canonical_hook_root = {tmp_path / 'hooks'}" in proc.stdout.splitlines()
     assert f"conversation_database = {tmp_path / 'convs'}" in proc.stdout.splitlines()
     assert "plugin files: present" in proc.stdout
-    assert "Conversation database: present" in proc.stdout
+    assert "Relay archive: present" in proc.stdout
     assert "canonical plugin: present (9 skills)" in proc.stdout
     assert "legacy claude plugin .claude/skills/conv: absent" in proc.stdout
     assert "legacy agents plugin .agents/skills/conv: absent" in proc.stdout
-    assert "legacy canonical plugin conv: absent" in proc.stdout
+    assert "older canonical plugin conv: absent" in proc.stdout
 
 
 def test_status_reports_missing_on_empty(tmp_path):
     proc = install_into(tmp_path, "--status")
     assert proc.returncode == 0, proc.stderr
     assert "plugin files: missing" in proc.stdout
-    assert "Conversation database: missing" in proc.stdout
+    assert "Relay archive: missing" in proc.stdout
     assert "missing" in proc.stdout  # links reported missing too
 
 
@@ -310,14 +368,14 @@ def test_real_codex_and_claude_homes_get_entrypoints_and_hook_config(tmp_path):
     home = tmp_path / "home"
     codex_home = home / ".codex"
     claude_home = home / ".claude"
-    canonical_plugin = root / "conversate"
+    canonical_plugin = root / "relay"
     canonical_hooks = root / "hooks"
 
     proc = install_into(root, "--agents", "codex,claude", "--hooks", "codex,claude", home=home)
     assert proc.returncode == 0, proc.stderr + proc.stdout
 
-    codex_entrypoint = codex_home / "skills" / "conversate"
-    claude_entrypoint = claude_home / "skills" / "conversate"
+    codex_entrypoint = codex_home / "skills" / "relay"
+    claude_entrypoint = claude_home / "skills" / "relay"
     assert os.path.realpath(codex_entrypoint) == os.path.realpath(canonical_plugin)
     assert os.path.realpath(claude_entrypoint) == os.path.realpath(canonical_plugin)
     assert (codex_home / "hooks.json").is_file()
@@ -325,15 +383,17 @@ def test_real_codex_and_claude_homes_get_entrypoints_and_hook_config(tmp_path):
     assert not os.path.lexists(root / ".codex")
     assert not os.path.lexists(root / ".claude")
 
-    codex_hook = conversate_codex_hook(root, home=home)
+    codex_hook = relay_codex_hook(root, home=home)
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
     codex_command = codex_hook["command"] + codex_hook["commandWindows"]
-    assert str(canonical_hooks / "codex" / "conv_turn_counter.py") in codex_command
+    assert str(binary) in codex_command
+    assert "hook" in codex_command and "--agent" in codex_command and "codex" in codex_command
     claude_hook = next(
-        entry
-        for entry in claude_hook_entries(root, home=home)
-        if "conv-turn-counter" in json.dumps(entry)
+        entry for entry in claude_hook_entries(root, home=home)
+        if entry.get("x-installed-by") == "relay"
     )
-    assert claude_hook["args"][-1] == str(canonical_hooks / "claude" / "conv-turn-counter.ps1")
+    assert claude_hook["command"] == str(binary)
+    assert claude_hook["args"] == ["hook", "--agent", "claude"]
 
 
 def test_status_and_dry_run_report_real_agent_surfaces(tmp_path):
@@ -361,18 +421,18 @@ def test_status_reports_incomplete_canonical_payload_plugin_and_hooks(tmp_path):
     first = install_into(root)
     assert first.returncode == 0, first.stderr + first.stdout
 
-    (root / "scripts" / "conv_cli.py").write_text("STALE RUNTIME\n", encoding="utf-8")
-    (root / "conversate" / "skills" / "save" / "SKILL.md").unlink()
-    (root / "hooks" / "codex" / "conv_turn_counter.py").unlink()
+    (root / "bin" / ("relay.exe" if os.name == "nt" else "relay")).write_bytes(b"STALE BINARY")
+    (root / "relay" / "skills" / "save" / "SKILL.md").unlink()
+    (root / "hooks" / "codex" / "hooks.json").unlink()
 
     status = install_into(root, "--status")
     assert status.returncode == 0, status.stderr + status.stdout
     assert "runtime files: stale" in status.stdout
-    assert "runtime files: stale 1 required artifact(s): scripts/conv_cli.py" in status.stdout
+    assert "runtime files: stale 1 required artifact(s): bin/relay" in status.stdout
     assert "plugin files: missing" in status.stdout
     assert "canonical plugin artifacts: missing 1 required artifact(s): skills/save/SKILL.md" in status.stdout
     assert "canonical hooks: missing" in status.stdout
-    assert "canonical hook artifacts: missing 1 required artifact(s): codex/conv_turn_counter.py" in status.stdout
+    assert "canonical hook artifacts: missing 1 required artifact(s): codex/hooks.json" in status.stdout
 
 
 def make_stale_nested_install_surfaces(root: Path, home: Path) -> None:
@@ -381,8 +441,8 @@ def make_stale_nested_install_surfaces(root: Path, home: Path) -> None:
     shutil.copytree(root.joinpath(*CANONICAL_PLUGIN), stale_agents)
     shutil.copytree(root.joinpath(*CANONICAL_PLUGIN), stale_claude)
 
-    codex_entrypoint = home / ".codex" / "skills" / "conversate"
-    claude_entrypoint = home / ".claude" / "skills" / "conversate"
+    codex_entrypoint = home / ".codex" / "skills" / "relay"
+    claude_entrypoint = home / ".claude" / "skills" / "relay"
     install_mod._remove_dir_or_link(codex_entrypoint)
     install_mod._remove_dir_or_link(claude_entrypoint)
     install_mod._create_directory_entrypoint(codex_entrypoint, stale_agents)
@@ -404,13 +464,13 @@ def test_status_reports_wrong_entrypoints_and_stale_nested_surfaces(tmp_path):
     make_stale_nested_install_surfaces(root, home)
     codex_hooks = home / ".codex" / "hooks.json"
     codex_data = json.loads(codex_hooks.read_text(encoding="utf-8"))
-    codex_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = "python stale/conv_turn_counter.py"
-    codex_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["commandWindows"] = "py -3 stale\\conv_turn_counter.py"
+    codex_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = "python stale/relay_turn_counter.py"
+    codex_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["commandWindows"] = "py -3 stale\\relay_turn_counter.py"
     codex_hooks.write_text(json.dumps(codex_data), encoding="utf-8")
     claude_settings = home / ".claude" / "settings.json"
     claude_data = json.loads(claude_settings.read_text(encoding="utf-8"))
     claude_hook = claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
-    claude_hook["command"] = "pwsh -File stale/conv-turn-counter.ps1"
+    claude_hook["command"] = "pwsh -File stale/relay-turn-counter.ps1"
     claude_hook.pop("args", None)
     claude_settings.write_text(json.dumps(claude_data), encoding="utf-8")
 
@@ -435,18 +495,15 @@ def test_status_distinguishes_canonical_targets_with_stale_invocation_shapes(tmp
     codex_data = json.loads(codex_path.read_text(encoding="utf-8"))
     codex_hook = codex_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
     command_windows = codex_hook["commandWindows"]
-    codex_script = root / "hooks" / "codex" / "conv_turn_counter.py"
-    stale_script = root / "stale" / "conv_turn_counter.py"
-    codex_hook["commandWindows"] = command_windows.replace(
-        str(codex_script), str(stale_script)
-    )
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    stale_binary = root / "stale" / binary.name
+    codex_hook["commandWindows"] = command_windows.replace(str(binary), str(stale_binary))
     codex_path.write_text(json.dumps(codex_data), encoding="utf-8")
 
     claude_path = claude_settings_path(root)
     claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
     claude_hook = claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]
-    script = claude_hook.pop("args")[-1]
-    claude_hook["command"] = f'{claude_hook["command"]} -NoProfile -File "{script}"'
+    claude_hook["command"] = claude_hook["command"] + " stale"
     claude_path.write_text(json.dumps(claude_data), encoding="utf-8")
 
     status = install_into(root, "--status")
@@ -471,7 +528,7 @@ def test_status_distinguishes_canonical_targets_with_stale_invocation_shapes(tmp
     assert "stale invocation" not in repaired_status.stdout
 
 
-def test_repair_migrates_stale_nested_copy_state_to_conversate_ssot(tmp_path):
+def test_repair_preserves_legacy_nested_surfaces_while_repairing_relay(tmp_path):
     root = tmp_path / "plugin-root"
     home = tmp_path / "home"
     first = install_into(root, "--agents", "codex,claude", "--hooks", "codex,claude", home=home)
@@ -493,33 +550,35 @@ def test_repair_migrates_stale_nested_copy_state_to_conversate_ssot(tmp_path):
     assert repaired.returncode == 0, repaired.stderr + repaired.stdout
     assert f"plugin_source = {REPO_ROOT.resolve()}" in repaired.stdout.splitlines()
     assert f"universal_installation_root = {root.resolve()}" in repaired.stdout.splitlines()
-    assert f"canonical_plugin_root = {(root / 'conversate').resolve()}" in repaired.stdout.splitlines()
+    assert f"canonical_plugin_root = {(root / 'relay').resolve()}" in repaired.stdout.splitlines()
     assert f"canonical_hook_root = {(root / 'hooks').resolve()}" in repaired.stdout.splitlines()
     assert "codex: hook command changed; Codex may require hook reapproval or retrust" in repaired.stdout
 
-    assert (root / "conversate" / "SKILL.md").is_file()
-    assert (root / "hooks" / "codex" / "conv_turn_counter.py").is_file()
-    assert (root / "hooks" / "claude" / "conv-turn-counter.ps1").is_file()
-    assert os.path.realpath(home / ".codex" / "skills" / "conversate") == os.path.realpath(root / "conversate")
-    assert os.path.realpath(home / ".claude" / "skills" / "conversate") == os.path.realpath(root / "conversate")
-    codex_hook = conversate_codex_hook(root, home=home)
+    assert (root / "relay" / "SKILL.md").is_file()
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert binary.is_file()
+    assert (root / "hooks" / "codex" / "hooks.json").is_file()
+    assert (root / "hooks" / "claude" / "settings-snippet.json").is_file()
+    assert os.path.realpath(home / ".codex" / "skills" / "relay") == os.path.realpath(root / "relay")
+    assert os.path.realpath(home / ".claude" / "skills" / "relay") == os.path.realpath(root / "relay")
+    codex_hook = relay_codex_hook(root, home=home)
     codex_command = codex_hook["command"] + codex_hook["commandWindows"]
-    assert str(root / "hooks" / "codex" / "conv_turn_counter.py") in codex_command
+    assert str(binary) in codex_command
     assert_stale_hook_targets_removed(codex_command)
     claude_hook = next(
-        entry
-        for entry in claude_hook_entries(root, home=home)
-        if "conv-turn-counter" in json.dumps(entry)
+        entry for entry in claude_hook_entries(root, home=home)
+        if entry.get("x-installed-by") == "relay"
     )
-    claude_invocation = install_mod._command_text(claude_hook)
-    assert str(root / "hooks" / "claude" / "conv-turn-counter.ps1") in claude_invocation
-    assert_stale_hook_targets_removed(claude_invocation)
+    assert claude_hook["command"] == str(binary)
+    assert claude_hook["args"] == ["hook", "--agent", "claude"]
     assert record.read_bytes() == record_bytes
     assert nested_record.read_bytes() == nested_record_bytes
-    assert not os.path.lexists(root.joinpath(*LEGACY_AGENTS_PLUGIN))
-    assert not os.path.lexists(root.joinpath(*LEGACY_CLAUDE_PLUGIN))
-    assert not os.path.lexists(root / ".codex" / "hooks.json")
-    assert not os.path.lexists(root / ".claude" / "settings.json")
+    # Legacy aliases and legacy nested configuration are status-only evidence:
+    # repair must never remove or rewrite them.
+    assert root.joinpath(*LEGACY_AGENTS_PLUGIN).is_dir()
+    assert root.joinpath(*LEGACY_CLAUDE_PLUGIN).is_dir()
+    assert (root / ".codex" / "hooks.json").is_file()
+    assert (root / ".claude" / "settings.json").is_file()
 
     status = install_into(root, "--status", home=home)
     assert status.returncode == 0, status.stderr + status.stdout
@@ -527,28 +586,27 @@ def test_repair_migrates_stale_nested_copy_state_to_conversate_ssot(tmp_path):
     assert any(line.startswith("claude entrypoint:") and "canonical plugin" in line for line in status.stdout.splitlines())
     assert f"hook codex: wired -> canonical hooks ({home / '.codex' / 'hooks.json'})" in status.stdout
     assert f"hook claude: wired -> canonical hooks ({home / '.claude' / 'settings.json'})" in status.stdout
-    assert "legacy agents plugin .agents/skills/conv: absent" in status.stdout
-    assert "legacy claude plugin .claude/skills/conv: absent" in status.stdout
-    assert "legacy nested codex hook .codex/hooks.json: absent" in status.stdout
-    assert "legacy nested claude hook .claude/settings.json: absent" in status.stdout
+    assert "legacy agents plugin .agents/skills/conv: stale installer-owned copy" in status.stdout
+    assert "legacy claude plugin .claude/skills/conv: stale installer-owned copy" in status.stdout
+    assert "legacy nested codex hook .codex/hooks.json: stale installer-owned hook config" in status.stdout
+    assert "legacy nested claude hook .claude/settings.json: stale installer-owned hook config" in status.stdout
     assert "wrong target" not in status.stdout
-    assert "stale installer-owned" not in status.stdout
 
 
 def test_help_and_status_use_plugin_root_and_database_terms(tmp_path):
     help_proc = run_install(["--help"])
     assert help_proc.returncode == 0, help_proc.stderr + help_proc.stdout
     assert "Plugin installation root" in help_proc.stdout
-    assert "Conversation database" in help_proc.stdout
+    assert "Relay archive" in help_proc.stdout
 
     status = install_into(tmp_path, "--status")
     assert status.returncode == 0, status.stderr + status.stdout
     assert f"universal_installation_root = {tmp_path}" in status.stdout.splitlines()
     assert f"plugin_installation_root = {tmp_path}" in status.stdout.splitlines()
-    assert f"canonical_plugin_root = {tmp_path / 'conversate'}" in status.stdout.splitlines()
+    assert f"canonical_plugin_root = {tmp_path / 'relay'}" in status.stdout.splitlines()
     assert f"canonical_hook_root = {tmp_path / 'hooks'}" in status.stdout.splitlines()
     assert f"conversation_database = {tmp_path / 'convs'}" in status.stdout.splitlines()
-    assert "Conversation database:" in status.stdout
+    assert "Relay archive:" in status.stdout
     assert "store root" not in status.stdout.lower()
     assert "conversation store" not in status.stdout.lower()
 
@@ -578,7 +636,7 @@ def test_uninstall_removes_plugins_but_preserves_convs(tmp_path):
     assert not pi_hooks_path(tmp_path).exists()
     assert not omp_hooks_path(tmp_path).exists()
     assert not os.path.lexists(tmp_path / ".omp")
-    # Conversation database and the planted record remain
+    # Relay archive and the planted record remain
     assert (tmp_path / "SKILL.md").is_file()
     assert planted.is_file()
     assert planted.read_text(encoding="utf-8") == "PRECIOUS DATA\n"
@@ -635,14 +693,12 @@ def test_hooks_wiring_pi_and_codex(tmp_path):
     assert pi_hook.is_file()
     assert codex_hooks.is_file()
     assert not (tmp_path / ".codex").exists()
-    assert "conv_turn_counter" in codex_hooks.read_text(encoding="utf-8")
-    for entry in codex_hook_entries(tmp_path):
-        command = entry.get("command", "")
-        command_windows = entry.get("commandWindows", "")
-        if "conv_turn_counter" in command + command_windows:
-            assert "__CONVERSATE_" not in command + command_windows
-            assert not command.lstrip().startswith("python3 ")
-            assert not command_windows.lstrip().startswith("python3 ")
+    owned = relay_codex_hook(tmp_path)
+    binary = tmp_path / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert owned["command"] == install_mod._codex_hook_command(binary, powershell=os.name == "nt")
+    assert owned["commandWindows"] == install_mod._codex_hook_command(binary, powershell=True)
+    assert owned.get("x-installed-by") == "relay"
+    assert "args" not in owned and "shell" not in owned
     # codex hook was the only entry, so uninstall removes the file entirely
     assert install_into(tmp_path, "--uninstall").returncode == 0
     assert not codex_hooks.exists()
@@ -656,7 +712,7 @@ def test_raw_hook_install_refuses_foreign_file_then_force_backs_up(tmp_path, hoo
 
     refused = install_into(tmp_path, "--hooks", hook_name)
     assert refused.returncode == 2
-    assert "differs from the conversate hook" in refused.stderr
+    assert "differs from the relay hook" in refused.stderr
     assert dest.read_text(encoding="utf-8") == "foreign hook\n"
 
     forced = install_into(tmp_path, "--hooks", hook_name, "--force")
@@ -689,71 +745,52 @@ def test_uninstall_removes_stale_owned_raw_hook_file(tmp_path, hook_name, parts)
     assert not dest.exists()
 
 
-def test_codex_hook_command_quotes_verified_python_and_script_paths_with_spaces(tmp_path):
+def test_codex_hook_command_quotes_binary_path_with_spaces(tmp_path):
     root = tmp_path / "Plugin installation root with spaces"
     proc = install_into(root, "--hooks", "codex")
     assert proc.returncode == 0, proc.stderr + proc.stdout
-
-    hook = next(entry for entry in codex_hook_entries(root) if "conv_turn_counter" in json.dumps(entry))
-    script = root / "hooks" / "codex" / "conv_turn_counter.py"
-    assert str(script) in hook["command"]
-    assert str(script) in hook["commandWindows"]
-    assert "__CONVERSATE_" not in hook["command"] + hook["commandWindows"]
+    hook = relay_codex_hook(root)
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert str(binary) in hook["command"]
+    assert str(binary) in hook["commandWindows"]
+    assert "__RELAY_" not in hook["command"] + hook["commandWindows"]
     assert hook["commandWindows"].startswith("& ")
-    assert install_mod._quote_powershell_arg(str(script)) in hook["commandWindows"]
-    if os.name == "nt":
-        assert hook["command"].startswith("& ")
-        assert install_mod._quote_powershell_arg(str(script)) in hook["command"]
-    assert not hook["command"].lstrip().startswith("python3 ")
-    assert not hook["commandWindows"].lstrip().startswith("python3 ")
+    assert install_mod._quote_powershell_arg(str(binary)) in hook["commandWindows"]
+    assert "hook" in hook["command"] and "--agent" in hook["command"]
 
 
-def test_generated_hook_commands_execute_through_configured_shell_with_metacharacter_path(tmp_path):
+
+def test_generated_binary_hooks_execute_with_metacharacter_path(tmp_path):
     root = tmp_path / "Plugin&Root O'Brien $HOME`literal"
     proc = install_into(root, "--hooks", "codex,claude")
     assert proc.returncode == 0, proc.stderr + proc.stdout
-
-    codex_hook = conversate_codex_hook(root)
-    codex_script = root / "hooks" / "codex" / "conv_turn_counter.py"
+    codex_hook = relay_codex_hook(root)
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
     if os.name == "nt":
-        quoted_script = install_mod._quote_powershell_arg(str(codex_script))
         assert codex_hook["commandWindows"].startswith("& ")
-        assert quoted_script in codex_hook["commandWindows"]
-        assert codex_hook["command"].startswith("& ")
-        assert quoted_script in codex_hook["command"]
+        assert install_mod._quote_powershell_arg(str(binary)) in codex_hook["commandWindows"]
         codex_commands = {"command": codex_hook["command"], "commandWindows": codex_hook["commandWindows"]}
     else:
         codex_commands = {"command": codex_hook["command"]}
-    for label, codex_command in codex_commands.items():
-        codex_run = run_generated_hook(
-            codex_command,
-            input_text=json.dumps(
-                {"hook_event_name": "UserPromptSubmit", "session_id": f"codex-{tmp_path.name}"}
-            ),
-            cwd=tmp_path,
-        )
-        assert codex_run.returncode == 0, f"{label}: " + codex_run.stderr + codex_run.stdout
+    payload = json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": f"codex-{tmp_path.name}"})
+    for label, command in codex_commands.items():
+        run = run_generated_hook(command, input_text=payload, cwd=tmp_path)
+        assert run.returncode == 0, f"{label}: {run.stderr}{run.stdout}"
 
-    if not (shutil.which("pwsh") or shutil.which("powershell")):
-        pytest.skip("PowerShell is not available to execute the generated Claude hook command")
-    claude_hook = next(
-        entry for entry in claude_hook_entries(root) if "conv-turn-counter" in json.dumps(entry)
-    )
-    claude_script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
-    assert claude_hook["args"][-1] == str(claude_script)
-    claude_run = run_generated_exec(
+    claude_hook = next(entry for entry in claude_hook_entries(root) if entry.get("x-installed-by") == "relay")
+    assert claude_hook["command"] == str(binary)
+    assert claude_hook["args"] == ["hook", "--agent", "claude"]
+    run = run_generated_exec(
         claude_hook["command"],
         claude_hook["args"],
-        input_text=json.dumps(
-            {
-                "hook_event_name": "UserPromptSubmit",
-                "session_id": f"claude-{tmp_path.name}",
-                "cwd": str(tmp_path),
-            }
-        ),
+        input_text=json.dumps({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": f"claude-{tmp_path.name}",
+            "cwd": str(tmp_path),
+        }),
         cwd=tmp_path,
     )
-    assert claude_run.returncode == 0, claude_run.stderr + claude_run.stdout
+    assert run.returncode == 0, run.stderr + run.stdout
 
     status = install_into(root, "--status")
     assert status.returncode == 0, status.stderr + status.stdout
@@ -770,8 +807,6 @@ def test_repair_restores_payload_plugins_and_missing_codex_hook_without_touching
     before = b"conversation bytes survive installer repair\n"
     record.write_bytes(before)
 
-    root_hook = root / "hooks" / "codex" / "conv_turn_counter.py"
-    root_hook.write_text("STALE HOOK\n", encoding="utf-8")
     stale_payload = root / "hooks" / "codex" / "__pycache__" / "old.pyc"
     stale_payload.parent.mkdir(parents=True)
     stale_payload.write_bytes(b"cache")
@@ -791,17 +826,17 @@ def test_repair_restores_payload_plugins_and_missing_codex_hook_without_touching
     assert repaired.returncode == 0, repaired.stderr + repaired.stdout
     assert "repair universal installation root" in repaired.stdout
     assert record.read_bytes() == before
-    assert "STALE HOOK" not in root_hook.read_text(encoding="utf-8")
+    assert (root / "hooks" / "codex" / "hooks.json").is_file()
     assert not stale_payload.exists()
     assert not stale_payload.parent.exists()
     assert not stale_reference.exists()
     assert not stale_plugin_file.exists()
     assert plugin_skill.is_file()
-    hook = conversate_codex_hook(root)
-    script = root / "hooks" / "codex" / "conv_turn_counter.py"
-    assert str(script) in hook["command"]
-    assert str(script) in hook["commandWindows"]
-    assert "__CONVERSATE_" not in hook["command"] + hook["commandWindows"]
+    hook = relay_codex_hook(root)
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert str(binary) in hook["command"]
+    assert str(binary) in hook["commandWindows"]
+    assert "__RELAY_" not in hook["command"] + hook["commandWindows"]
 
 
 def test_repair_rewrites_already_wired_codex_hook_when_hooks_omitted(tmp_path):
@@ -809,8 +844,8 @@ def test_repair_rewrites_already_wired_codex_hook_when_hooks_omitted(tmp_path):
     assert first.returncode == 0, first.stderr + first.stdout
     dest = codex_hooks_path(tmp_path)
     data = json.loads(dest.read_text(encoding="utf-8"))
-    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = "python3 stale/conv_turn_counter.py"
-    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["commandWindows"] = "py -3 stale\\conv_turn_counter.py"
+    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] = "python3 stale/relay_turn_counter.py"
+    data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["commandWindows"] = "py -3 stale\\relay_turn_counter.py"
     dest.write_text(json.dumps(data), encoding="utf-8")
 
     repaired = install_into(tmp_path, "--doctor-fix")
@@ -818,10 +853,45 @@ def test_repair_rewrites_already_wired_codex_hook_when_hooks_omitted(tmp_path):
     assert "repair hooks:" in repaired.stdout
     assert "codex" in repaired.stdout
     text = dest.read_text(encoding="utf-8")
-    assert "stale/conv_turn_counter.py" not in text
-    assert "stale\\conv_turn_counter.py" not in text
-    hook = conversate_codex_hook(tmp_path)
-    assert "__CONVERSATE_" not in hook["command"] + hook["commandWindows"]
+    assert "stale/relay_turn_counter.py" not in text
+    assert "stale\\relay_turn_counter.py" not in text
+    hook = relay_codex_hook(tmp_path)
+    assert "__RELAY_" not in hook["command"] + hook["commandWindows"]
+
+
+def test_update_rewrites_already_wired_codex_hook_when_hooks_omitted(tmp_path):
+    root = tmp_path / "plugin-root"
+    first = install_into(root, "--hooks", "codex")
+    assert first.returncode == 0, first.stderr + first.stdout
+
+    installed_binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    installed_binary.write_bytes(b"STALE BINARY")
+    stale_codex_hook(root)
+
+    dest = codex_hooks_path(root)
+    data = json.loads(dest.read_text(encoding="utf-8"))
+    data["hooks"]["UserPromptSubmit"][0]["hooks"].append(
+        {"type": "command", "command": "echo foreign prompt hook"}
+    )
+    dest.write_text(json.dumps(data), encoding="utf-8")
+
+    updated = install_into(root, "--update")
+    assert updated.returncode == 0, updated.stderr + updated.stdout
+    assert installed_binary.read_bytes() != b"STALE BINARY"
+
+    text = dest.read_text(encoding="utf-8")
+    hook = relay_codex_hook(root)
+    assert "stale/relay_turn_counter.py" not in text
+    assert "stale\\relay_turn_counter.py" not in text
+    assert "echo foreign prompt hook" in text
+    assert sum(1 for entry in codex_hook_entries(root) if entry.get("x-installed-by") == "relay") == 1
+    assert str(root / "bin") in hook["command"]
+    assert "hook --agent codex" in hook["command"] or "'hook' '--agent' 'codex'" in hook["command"]
+
+    status = install_into(root, "--status")
+    assert status.returncode == 0, status.stderr + status.stdout
+    assert "hook codex: wired -> canonical hooks" in status.stdout
+    assert f"hook codex command: {hook['command']}" in status.stdout
 
 
 def test_repair_restores_missing_hook_wiring_when_hooks_omitted(tmp_path):
@@ -838,10 +908,10 @@ def test_repair_restores_missing_hook_wiring_when_hooks_omitted(tmp_path):
     assert "repair hooks:" in repaired.stdout
     assert "codex" in repaired.stdout
     assert record.read_bytes() == before
-    hook = conversate_codex_hook(root)
-    script = root / "hooks" / "codex" / "conv_turn_counter.py"
-    assert str(script) in hook["command"]
-    assert str(script) in hook["commandWindows"]
+    hook = relay_codex_hook(root)
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert str(binary) in hook["command"]
+    assert str(binary) in hook["commandWindows"]
 
 
 def test_repair_dry_run_does_not_mutate_stale_payload_plugins_hooks_or_convs(tmp_path):
@@ -853,9 +923,8 @@ def test_repair_dry_run_does_not_mutate_stale_payload_plugins_hooks_or_convs(tmp
     record.parent.mkdir()
     record_bytes = b"nested conversation survives dry-run repair\n"
     record.write_bytes(record_bytes)
+    root_hook = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
 
-    root_hook = root / "hooks" / "codex" / "conv_turn_counter.py"
-    root_hook.write_text("STALE HOOK\n", encoding="utf-8")
     stale_payload = root / "references" / "obsolete.md"
     stale_payload.write_text("stale reference\n", encoding="utf-8")
     plugin_skill = root.joinpath(*CANONICAL_PLUGIN) / "skills" / "save" / "SKILL.md"
@@ -909,10 +978,10 @@ def test_repair_without_hooks_rewires_all_stale_owned_hooks(tmp_path):
     for hook_name in ("claude", "codex", "pi", "omp"):
         assert hook_name in repaired.stdout
 
-    codex = conversate_codex_hook(root)
+    codex = relay_codex_hook(root)
     assert_stale_hook_targets_removed(codex["command"] + codex["commandWindows"])
     claude_hook = next(
-        entry for entry in claude_hook_entries(root) if "conv-turn-counter" in json.dumps(entry)
+        entry for entry in claude_hook_entries(root) if entry.get("x-installed-by") == "relay"
     )
     assert_stale_hook_targets_removed(install_mod._command_text(claude_hook))
     assert "stale" not in pi_hook.read_text(encoding="utf-8")
@@ -932,8 +1001,8 @@ def test_repair_hooks_none_opts_out_of_hook_rewrites(tmp_path):
     repaired = install_into(root, "--repair", "--hooks", "none")
     assert repaired.returncode == 0, repaired.stderr + repaired.stdout
     assert "repair hooks: none selected" in repaired.stdout
-    assert "stale/conv_turn_counter.py" in codex_hooks_path(root).read_text(encoding="utf-8")
-    assert "stale/conv-turn-counter.ps1" in claude_settings_path(root).read_text(encoding="utf-8")
+    assert "relay-stale/bin/relay" in codex_hooks_path(root).read_text(encoding="utf-8")
+    assert "relay-stale/bin/relay.exe" in claude_settings_path(root).read_text(encoding="utf-8")
     assert "stale" in pi_hook.read_text(encoding="utf-8")
 
 
@@ -960,7 +1029,7 @@ def test_repair_preserves_and_reports_invalid_hook_json(tmp_path):
     assert claude_settings.read_text(encoding="utf-8") == claude_before
 
 
-def test_codex_hook_replaces_old_conversate_hook_and_preserves_foreign_hook(tmp_path):
+def test_codex_hook_replaces_old_relay_hook_and_preserves_foreign_hook(tmp_path):
     existing = {
         "hooks": {
             "UserPromptSubmit": [
@@ -968,8 +1037,8 @@ def test_codex_hook_replaces_old_conversate_hook_and_preserves_foreign_hook(tmp_
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "python3 .conversate/hooks/codex/conv_turn_counter.py",
-                            "commandWindows": "python .conversate/hooks/codex/conv_turn_counter.py",
+                            "command": "python3 .relay/hooks/codex/relay_turn_counter.py",
+                            "commandWindows": "python .relay/hooks/codex/relay_turn_counter.py",
                         },
                         {
                             "type": "command",
@@ -989,8 +1058,8 @@ def test_codex_hook_replaces_old_conversate_hook_and_preserves_foreign_hook(tmp_
     text = dest.read_text(encoding="utf-8")
     entries = codex_hook_entries(tmp_path)
     assert "echo foreign" in text
-    assert "python3 .conversate/hooks/codex/conv_turn_counter.py" not in text
-    assert sum(1 for entry in entries if "conv_turn_counter" in json.dumps(entry)) == 1
+    assert "python3 .relay/hooks/codex/relay_turn_counter.py" not in text
+    assert sum(1 for entry in entries if entry.get("x-installed-by") == "relay") == 1
 
 
 def test_codex_hook_preserves_foreign_events_groups_and_metadata(tmp_path):
@@ -1009,7 +1078,7 @@ def test_codex_hook_preserves_foreign_events_groups_and_metadata(tmp_path):
                     "matcher": "mixed",
                     "hooks": [
                         {"type": "command", "command": "echo foreign prompt"},
-                        {"type": "command", "command": "python ~/.conversate/hooks/codex/conv_turn_counter.py"},
+                        {"type": "command", "command": "python ~/.relay/hooks/codex/relay_turn_counter.py"},
                     ],
                 },
             ],
@@ -1027,17 +1096,17 @@ def test_codex_hook_preserves_foreign_events_groups_and_metadata(tmp_path):
     assert {"matcher": "keep-group-without-hooks"} in data["hooks"]["UserPromptSubmit"]
     assert existing["hooks"]["SessionStart"] == data["hooks"]["SessionStart"]
     assert "echo foreign prompt" in text
-    assert "python ~/.conversate/hooks/codex/conv_turn_counter.py" not in text
-    assert sum(1 for entry in codex_hook_entries(tmp_path) if "conv_turn_counter" in json.dumps(entry)) == 1
+    assert "python ~/.relay/hooks/codex/relay_turn_counter.py" not in text
+    assert sum(1 for entry in codex_hook_entries(tmp_path) if entry.get("x-installed-by") == "relay") == 1
 
 
-def test_codex_hook_preserves_unrelated_command_under_conversate_root(tmp_path):
+def test_codex_hook_preserves_unrelated_command_under_relay_root(tmp_path):
     existing = {
         "hooks": {
             "UserPromptSubmit": [
                 {
                     "hooks": [
-                        {"type": "command", "command": "python ~/.conversate/scripts/not_the_counter.py"}
+                        {"type": "command", "command": "python ~/.relay/scripts/not_the_counter.py"}
                     ]
                 }
             ]
@@ -1051,7 +1120,7 @@ def test_codex_hook_preserves_unrelated_command_under_conversate_root(tmp_path):
     assert proc.returncode == 0, proc.stderr + proc.stdout
     text = dest.read_text(encoding="utf-8")
     assert "not_the_counter.py" in text
-    assert sum(1 for entry in codex_hook_entries(tmp_path) if "conv_turn_counter" in json.dumps(entry)) == 1
+    assert sum(1 for entry in codex_hook_entries(tmp_path) if entry.get("x-installed-by") == "relay") == 1
 
     removed = install_into(tmp_path, "--uninstall")
     assert removed.returncode == 0, removed.stderr + removed.stdout
@@ -1080,7 +1149,7 @@ def test_claude_hook_uses_custom_target_and_replaces_owned_hook(tmp_path):
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "powershell -NoProfile -File \"~/.conversate/hooks/claude/conv-turn-counter.ps1\"",
+                                    "command": "powershell -NoProfile -File \"~/.relay/hooks/claude/relay-turn-counter.ps1\"",
                                 },
                                 {"type": "command", "command": "echo foreign"},
                             ]
@@ -1095,35 +1164,35 @@ def test_claude_hook_uses_custom_target_and_replaces_owned_hook(tmp_path):
     proc = install_into(root, "--hooks", "claude")
     assert proc.returncode == 0, proc.stderr + proc.stdout
     text = settings.read_text(encoding="utf-8")
-    script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
     entries = claude_hook_entries(root)
-    hook = next(entry for entry in entries if "conv-turn-counter" in json.dumps(entry))
-    assert hook["args"][-1] == str(script)
-    assert "-NoProfile" in hook["args"]
-    assert "~/.conversate/hooks/claude" not in text
+    hook = next(entry for entry in entries if entry.get("x-installed-by") == "relay")
+    assert hook["command"] == str(binary)
+    assert hook["args"] == ["hook", "--agent", "claude"]
+    assert "relay-turn-counter.ps1" not in text
     assert "echo foreign" in text
-    assert sum(1 for entry in entries if "conv-turn-counter" in json.dumps(entry)) == 1
+    assert sum(1 for entry in entries if entry.get("x-installed-by") == "relay") == 1
 
 
 def test_claude_hook_command_text_inspects_args_for_ownership():
     # Regression: a command+args hook entry (the real-world stale form, e.g.
-    # {"command": "pwsh", "args": ["-File", "<worktree>/.claude/hooks/conv-turn-counter.ps1"]})
-    # must be recognized as Conversate-owned so repair/uninstall can replace or strip it.
+    # {"command": "pwsh", "args": ["-File", "<worktree>/.claude/hooks/relay-turn-counter.ps1"]})
+    # must be recognized as Relay-owned so repair/uninstall can replace or strip it.
     args_entry = {
         "type": "command",
         "command": "pwsh",
         "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                 "${CLAUDE_PROJECT_DIR}/.claude/hooks/conv-turn-counter.ps1"],
+                 "${CLAUDE_PROJECT_DIR}/.claude/hooks/relay-turn-counter.ps1"],
     }
     assert install_mod._is_our_hook(args_entry)
-    assert "conv-turn-counter.ps1" in install_mod._command_text(args_entry)
-    # Non-conversate args-form entry is NOT claimed as ours.
+    assert "relay-turn-counter.ps1" in install_mod._command_text(args_entry)
+    # Non-relay args-form entry is NOT claimed as ours.
     foreign = {"type": "command", "command": "pwsh", "args": ["-File", "other.ps1"]}
     assert not install_mod._is_our_hook(foreign)
 
 
 def test_canonical_claude_exec_hook_is_owned_and_canonical(tmp_path):
-    script = tmp_path / "O'Brien" / "hooks" / "claude" / "conv-turn-counter.ps1"
+    script = tmp_path / "O'Brien" / "hooks" / "claude" / "relay-turn-counter.ps1"
     entry = {
         "type": "command",
         "command": r"C:\Program Files\PowerShell\7\pwsh.exe",
@@ -1134,22 +1203,19 @@ def test_canonical_claude_exec_hook_is_owned_and_canonical(tmp_path):
     assert install_mod._hook_entry_points_to(entry, script)
 
 
-def test_powershell_call_operator_hook_remains_owned_and_canonical(tmp_path):
-    script = tmp_path / "O'Brien" / "hooks" / "codex" / "conv_turn_counter.py"
-    command = install_mod._codex_hook_command(
-        (r"C:\Program Files\Python\python.exe",), script, powershell=True
-    )
-    entry = {"type": "command", "commandWindows": command}
-
+def test_powershell_call_operator_hook_quotes_binary_path(tmp_path):
+    binary = tmp_path / "O'Brien" / "bin" / "relay.exe"
+    command = install_mod._codex_hook_command(binary, powershell=True)
+    entry = {"type": "command", "commandWindows": command, "x-installed-by": "relay"}
     assert command.startswith("& '")
     assert install_mod._is_our_hook(entry)
-    assert install_mod._hook_entry_points_to(entry, script)
+    assert install_mod._hook_entry_points_to(entry, binary)
 
 
 def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_owned_hook(tmp_path):
     # Regression for the reported bug: a project settings.json carrying a stale
-    # command+args Conversate hook (the real-world {command: "pwsh", args: [..., "-File",
-    # "<worktree>/.claude/hooks/conv-turn-counter.ps1"]} form) must be (1) recognized as
+    # command+args Relay hook (the real-world {command: "pwsh", args: [..., "-File",
+    # "<worktree>/.claude/hooks/relay-turn-counter.ps1"]} form) must be (1) recognized as
     # ours by _hook_wired_claude so --repair with NO --hooks selects Claude for repair,
     # and (2) rewritten to the canonical installed script path, preserving foreign hooks.
     root = tmp_path / "Plugin installation root"
@@ -1169,14 +1235,14 @@ def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_o
                                 {
                                     "type": "command",
                                     "command": "pwsh",
-                                    "commandWindows": "pwsh -File stale/conv-turn-counter.ps1",
+                                    "commandWindows": "pwsh -File stale/relay-turn-counter.ps1",
                                     "shell": "powershell",
                                     "args": [
                                         "-NoProfile",
                                         "-ExecutionPolicy",
                                         "Bypass",
                                         "-File",
-                                        "${CLAUDE_PROJECT_DIR}/.claude/hooks/conv-turn-counter.ps1",
+                                        "${CLAUDE_PROJECT_DIR}/.claude/hooks/relay-turn-counter.ps1",
                                     ],
                                     "timeout": 5,
                                 },
@@ -1206,47 +1272,19 @@ def test_claude_hook_repair_without_hooks_selects_and_rewrites_stale_args_form_o
     text = settings.read_text(encoding="utf-8")
     # The stale worktree-local path is gone entirely.
     assert "${CLAUDE_PROJECT_DIR}" not in text
-    assert ".claude/hooks/conv-turn-counter.ps1" not in text
+    assert ".claude/hooks/relay-turn-counter.ps1" not in text
     # A foreign hook in the same group is preserved.
     assert "echo foreign" in text
     entries = claude_hook_entries(root, home=home)
-    # Exactly one Conversate entry remains, now in canonical shell-free exec form.
-    owned = [entry for entry in entries if "conv-turn-counter" in json.dumps(entry)]
+    # Exactly one Relay entry remains, now in canonical shell-free exec form.
+    owned = [entry for entry in entries if entry.get("x-installed-by") == "relay"]
     assert len(owned) == 1
-    script = root / "hooks" / "claude" / "conv-turn-counter.ps1"
-    assert owned[0]["args"][-1] == str(script)
-    assert owned[0]["command"] == install_mod._resolve_powershell_executable()
+    binary = root / "bin" / ("relay.exe" if os.name == "nt" else "relay")
+    assert owned[0]["command"] == str(binary)
+    assert owned[0]["args"] == ["hook", "--agent", "claude"]
     assert "commandWindows" not in owned[0]
     assert "shell" not in owned[0]
 
-
-def test_python3_resolver_verifies_candidates_before_returning():
-    resolved = install_mod._resolve_python3_command(
-        candidates=[("python3",), ("python",)],
-        verifier=lambda command: command == ("python",),
-    )
-    assert resolved == ("python",)
-
-
-def test_python3_resolver_fails_clearly_when_no_candidate_is_verified():
-    with pytest.raises(install_mod.InstallError, match="no Python 3 interpreter found"):
-        install_mod._resolve_python3_command(
-            candidates=[("python3",), ("python",)],
-            verifier=lambda _command: False,
-        )
-
-
-def test_conversate_python_windows_parsing_preserves_backslashes_and_quoted_spaces():
-    assert install_mod._split_python_command(
-        r'"C:\Program Files\Python\python.exe" -X utf8',
-        is_windows=True,
-    ) == (r"C:\Program Files\Python\python.exe", "-X", "utf8")
-    candidates = install_mod._python3_candidates(
-        is_windows=True,
-        env={"CONVERSATE_PYTHON": r"C:\Tools\Python311\python.exe -X utf8"},
-        current_executable="",
-    )
-    assert candidates[0] == (r"C:\Tools\Python311\python.exe", "-X", "utf8")
 
 
 def test_powershell_quoting_is_literal_and_escapes_apostrophes():
@@ -1258,91 +1296,6 @@ def test_powershell_quoting_is_literal_and_escapes_apostrophes():
     assert command == "& 'C:\\Tools & O''Brien\\$Python` (3)\\python.exe\\' '-X' '' '$HOME'"
 
 
-def test_conversate_python_windows_quoting_handles_shell_meta_and_trailing_backslash(monkeypatch, tmp_path):
-    configured = r'"C:\Tools & Stuff\Python (3)\python.exe\" -X utf8'
-    parsed = install_mod._python3_candidates(
-        is_windows=True,
-        env={"CONVERSATE_PYTHON": configured},
-        current_executable="",
-    )[0]
-    assert parsed == ("C:\\Tools & Stuff\\Python (3)\\python.exe\\", "-X", "utf8")
-
-    monkeypatch.setattr(install_mod, "_resolve_python3_command", lambda: parsed)
-    ctx = install_mod.Ctx(source=REPO_ROOT, target=tmp_path)
-    template = {
-        "UserPromptSubmit": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "python old/conv_turn_counter.py",
-                        "commandWindows": "python old\\conv_turn_counter.py",
-                    }
-                ]
-            }
-        ]
-    }
-
-    incoming = install_mod._codex_hook_template_with_command(ctx, template)
-    hook = incoming["UserPromptSubmit"][0]["hooks"][0]
-    quoted_python = install_mod._quote_powershell_arg(parsed[0])
-    assert hook["commandWindows"].startswith(f"& {quoted_python} '-X' 'utf8' ")
-    if os.name == "nt":
-        assert hook["command"].startswith(f"& {quoted_python} '-X' 'utf8' ")
-    assert "old" not in hook["command"] + hook["commandWindows"]
-
-
-def test_codex_hook_template_uses_verified_python_command(monkeypatch, tmp_path):
-    monkeypatch.setattr(install_mod, "_resolve_python3_command", lambda: ("verified-python", "-3"))
-    ctx = install_mod.Ctx(source=REPO_ROOT, target=tmp_path)
-    template = {
-        "UserPromptSubmit": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "python3 old/conv_turn_counter.py",
-                        "commandWindows": "python old\\conv_turn_counter.py",
-                    }
-                ]
-            }
-        ]
-    }
-
-    incoming = install_mod._codex_hook_template_with_command(ctx, template)
-    hook = incoming["UserPromptSubmit"][0]["hooks"][0]
-    script = tmp_path / "hooks" / "codex" / "conv_turn_counter.py"
-    if os.name == "nt":
-        assert hook["command"].startswith("& 'verified-python' '-3' ")
-    else:
-        assert hook["command"].startswith("verified-python -3 ")
-    assert hook["commandWindows"].startswith("& 'verified-python' '-3' ")
-    assert str(script) in hook["command"]
-    assert str(script) in hook["commandWindows"]
-    assert "old" not in hook["command"] + hook["commandWindows"]
-
-
-def test_codex_hook_template_fails_clearly_when_no_python_verifies(monkeypatch, tmp_path):
-    def fail():
-        raise install_mod.InstallError("codex: no Python 3 interpreter found for hook command; tried nope")
-
-    monkeypatch.setattr(install_mod, "_resolve_python3_command", fail)
-    ctx = install_mod.Ctx(source=REPO_ROOT, target=tmp_path)
-    template = {
-        "UserPromptSubmit": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "python old/conv_turn_counter.py",
-                    }
-                ]
-            }
-        ]
-    }
-
-    with pytest.raises(install_mod.InstallError, match="no Python 3 interpreter found"):
-        install_mod._codex_hook_template_with_command(ctx, template)
 
 
 def test_refuses_installing_into_plugin_source():
@@ -1443,17 +1396,20 @@ def test_installed_repair_ignores_stale_hidden_repair_source_without_touching_co
     live_reference.write_bytes(live_reference_bytes)
     live_plugin_skill.write_bytes(live_plugin_bytes)
 
-    hidden = root / ".conversate-repair-source"
+    hidden = root / ".relay-repair-source"
     assert not hidden.exists()
     (hidden / "scripts").mkdir(parents=True)
+    (hidden / "bin").mkdir(parents=True)
     (hidden / "references").mkdir(parents=True)
     (hidden / "plugins" / "conv" / ".claude-plugin").mkdir(parents=True)
     (hidden / "plugins" / "conv" / "skills" / "save").mkdir(parents=True)
     (hidden / "SKILL.md").write_text("stale hidden root skill\n", encoding="utf-8")
-    (hidden / "scripts" / "conv_cli.py").write_text("stale hidden cli\n", encoding="utf-8")
+    (hidden / "bin" / ("relay.exe" if os.name == "nt" else "relay")).write_text(
+        "stale hidden binary\n", encoding="utf-8"
+    )
     (hidden / "references" / "save.md").write_bytes(b"STALE HIDDEN REFERENCE\n")
     (hidden / "plugins" / "conv" / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"x-installed-by": "conversate"}),
+        json.dumps({"x-installed-by": "relay"}),
         encoding="utf-8",
     )
     (hidden / "plugins" / "conv" / "skills" / "save" / "SKILL.md").write_bytes(b"STALE HIDDEN PLUGIN\n")
@@ -1496,16 +1452,16 @@ def test_fresh_install_registers_conv_plugin_with_nine_skills(tmp_path):
     assert manifest.is_file(), f"conv plugin manifest not at {manifest}"
     assert codex_manifest.is_file(), f"Codex plugin manifest not at {codex_manifest}"
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    assert data["name"] == "conversate"
-    assert data.get("x-installed-by") == "conversate"
+    assert data["name"] == "relay"
+    assert data.get("x-installed-by") == "relay"
     codex_data = json.loads(codex_manifest.read_text(encoding="utf-8"))
-    assert codex_data["name"] == "conversate"
+    assert codex_data["name"] == "relay"
     assert codex_data["skills"] == "./skills/"
     codex_text = json.dumps(codex_data)
-    for skill in CONV_SKILLS:
-        if skill != "conversate":
-            assert f"conversate:{skill}" in codex_text
-    for skill in CONV_SKILLS:
+    for skill in RELAY_SKILLS:
+        if skill != "relay":
+            assert f"relay:{skill}" in codex_text
+    for skill in RELAY_SKILLS:
         skill_md = plugin_root / "skills" / skill / "SKILL.md"
         assert skill_md.is_file(), f"missing skill {skill!r} at {skill_md}"
 
@@ -1564,7 +1520,7 @@ def test_uninstall_removes_conv_plugin_but_preserves_plugin_installation_root(tm
 def test_foreign_conv_plugin_refused_then_force_recovers(tmp_path):
     # Contract 6: a pre-existing conv dir we didn't install must be refused
     # (exit 2) rather than clobbered; --force backs it up to conv.bak-1 and
-    # installs the real conversate-owned plugin in its place.
+    # installs the real relay-owned plugin in its place.
     foreign_root = tmp_path.joinpath(*CANONICAL_PLUGIN)
     foreign_manifest = foreign_root / ".claude-plugin" / "plugin.json"
     foreign_manifest.parent.mkdir(parents=True)
@@ -1572,17 +1528,17 @@ def test_foreign_conv_plugin_refused_then_force_recovers(tmp_path):
 
     refused = install_into(tmp_path)
     assert refused.returncode == 2
-    assert "not a conversate-owned plugin" in refused.stderr
+    assert "not a relay-owned plugin" in refused.stderr
 
     forced = install_into(tmp_path, "--force")
     assert forced.returncode == 0, forced.stderr + forced.stdout
     backups = [
         p.name for p in tmp_path.iterdir()
-        if p.name.startswith("conversate.bak")
+        if p.name.startswith("relay.bak")
     ]
-    assert "conversate.bak-1" in backups
+    assert "relay.bak-1" in backups
     data = json.loads(foreign_manifest.read_text(encoding="utf-8"))
-    assert data.get("x-installed-by") == "conversate"
+    assert data.get("x-installed-by") == "relay"
 
 
 def test_dry_run_leaves_no_conv_plugin(tmp_path):
@@ -1593,30 +1549,32 @@ def test_dry_run_leaves_no_conv_plugin(tmp_path):
     assert not os.path.lexists(tmp_path.joinpath(*LEGACY_CLAUDE_PLUGIN))
     assert not os.path.lexists(tmp_path.joinpath(*LEGACY_AGENTS_PLUGIN))
 
-# --- canonical install-root migration (conv -> conversate) -------------------
+# --- legacy alias coexistence (conv -> relay) ---------------------------
 
 
-def test_reinstall_migrates_legacy_canonical_conv_root_to_conversate(tmp_path):
-    # An old install kept the plugin at <root>/conv. Re-running the installer must
-    # install the canonical root at <root>/conversate and remove the legacy <root>/conv
-    # (only when conversate-owned) so both install roots never coexist.
+def test_reinstall_preserves_legacy_canonical_conv_root_alongside_relay(tmp_path):
+    # An old install may still have <root>/conv. Reinstalling Relay creates the
+    # separate <root>/relay plugin but must leave the old alias byte-for-byte intact.
     assert install_into(tmp_path).returncode == 0
-    conversate = tmp_path.joinpath(*CANONICAL_PLUGIN)
+    relay = tmp_path.joinpath(*CANONICAL_PLUGIN)
     legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
-    shutil.copytree(conversate, legacy)
-    shutil.rmtree(conversate)
+    shutil.copytree(relay, legacy)
+    sentinel = legacy / "legacy-sentinel.txt"
+    sentinel.write_bytes(b"old conv alias must survive\r\n")
+    legacy_manifest = (legacy / ".claude-plugin" / "plugin.json").read_bytes()
+    shutil.rmtree(relay)
 
-    migrated = install_into(tmp_path)
-    assert migrated.returncode == 0, migrated.stderr + migrated.stdout
-    assert conversate.is_dir()
-    assert not os.path.lexists(legacy)
-    assert "legacy canonical plugin: removed" in migrated.stdout
-    assert_installed(tmp_path)
+    reinstalled = install_into(tmp_path)
+    assert reinstalled.returncode == 0, reinstalled.stderr + reinstalled.stdout
+    assert relay.is_dir()
+    assert sentinel.read_bytes() == b"old conv alias must survive\r\n"
+    assert (legacy / ".claude-plugin" / "plugin.json").read_bytes() == legacy_manifest
+    assert (tmp_path / "convs").is_dir()
+    assert (relay / "skills" / "relay" / "SKILL.md").is_file()
 
 
-def test_reinstall_leaves_foreign_legacy_conv_root_alongside_conversate(tmp_path):
-    # A foreign <root>/conv (no conversate manifest) is not ours and must be left
-    # untouched while the canonical root still installs at <root>/conversate.
+def test_reinstall_leaves_foreign_legacy_conv_root_alongside_relay(tmp_path):
+    # A foreign <root>/conv is also separate legacy state and remains untouched.
     assert install_into(tmp_path).returncode == 0
     legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
     legacy.mkdir()
@@ -1626,19 +1584,21 @@ def test_reinstall_leaves_foreign_legacy_conv_root_alongside_conversate(tmp_path
     assert second.returncode == 0, second.stderr + second.stdout
     assert (legacy / "foreign.txt").read_text(encoding="utf-8") == "not ours\n"
     assert tmp_path.joinpath(*CANONICAL_PLUGIN).is_dir()
-    assert "legacy canonical plugin: conv not conversate-owned; leaving as-is" in second.stdout
 
 
-def test_uninstall_removes_legacy_canonical_conv_root(tmp_path):
+def test_uninstall_preserves_legacy_canonical_conv_root(tmp_path):
     assert install_into(tmp_path).returncode == 0
     legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
     shutil.copytree(tmp_path.joinpath(*CANONICAL_PLUGIN), legacy)
+    sentinel = legacy / "legacy-sentinel.txt"
+    sentinel.write_bytes(b"do not remove legacy alias\n")
 
     un = install_into(tmp_path, "--uninstall")
     assert un.returncode == 0, un.stderr + un.stdout
-    assert not os.path.lexists(legacy)
+    assert legacy.is_dir()
+    assert sentinel.read_bytes() == b"do not remove legacy alias\n"
     assert not os.path.lexists(tmp_path.joinpath(*CANONICAL_PLUGIN))
-    # Conversation database survives uninstall.
+    # Relay archive survives uninstall.
     assert (tmp_path / "convs").is_dir()
 
 
@@ -1649,35 +1609,35 @@ def test_status_reports_legacy_canonical_conv_root_as_stale_copy(tmp_path):
 
     status = install_into(tmp_path, "--status")
     assert status.returncode == 0, status.stderr + status.stdout
-    assert "legacy canonical plugin conv: stale installer-owned copy (9 skills)" in status.stdout
+    assert "older canonical plugin conv: stale installer-owned copy (9 skills)" in status.stdout
 
 
-def test_inplace_repair_migrates_legacy_conv_root_to_conversate(tmp_path):
-    # In-place repair (source == target) of a legacy install: the new canonical root
-    # does not exist yet, so the repair reads the legacy <root>/conv as its source
-    # (only when conversate-owned) and migrates it into <root>/conversate.
+def test_inplace_repair_refuses_to_use_legacy_conv_root_as_a_relay_source(tmp_path):
+    # Repair must not treat a legacy alias as source material for a new Relay plugin.
     assert install_into(tmp_path).returncode == 0
-    conversate = tmp_path.joinpath(*CANONICAL_PLUGIN)
+    relay = tmp_path.joinpath(*CANONICAL_PLUGIN)
     legacy = tmp_path.joinpath(*LEGACY_CANONICAL_PLUGIN)
-    shutil.copytree(conversate, legacy)
-    shutil.rmtree(conversate)
+    shutil.copytree(relay, legacy)
+    sentinel = legacy / "legacy-sentinel.txt"
+    sentinel.write_bytes(b"legacy source remains untouched\n")
+    shutil.rmtree(relay)
 
     home = agent_home_for(tmp_path)
     repaired = run_install(
         ["--source", str(tmp_path), "--target", str(tmp_path), "--repair"],
         env=clean_env(home=home),
     )
-    assert repaired.returncode == 0, repaired.stderr + repaired.stdout
-    assert conversate.is_dir()
-    assert not os.path.lexists(legacy)
+    assert repaired.returncode == 2
+    assert not relay.exists()
+    assert sentinel.read_bytes() == b"legacy source remains untouched\n"
 
 # --- claude-plugin-only mode --------------------------------------------------
 
 
 def test_claude_plugin_only_installs_plugin_without_store_or_skill_link(tmp_path):
     # Contract: --claude-plugin-only installs ONLY the conv plugin skill group
-    # and skips the full install entirely: no root plugin files, no Conversation database, no
-    # legacy conversate skill link.
+    # and skips the full install entirely: no root plugin files, no Relay archive, no
+    # legacy relay skill link.
     proc = install_into(tmp_path, "--claude-plugin-only")
     assert proc.returncode == 0, proc.stderr + proc.stdout
     plugin_root = tmp_path.joinpath(*CANONICAL_PLUGIN)
@@ -1686,9 +1646,9 @@ def test_claude_plugin_only_installs_plugin_without_store_or_skill_link(tmp_path
     assert manifest.is_file(), f"conv plugin manifest not at {manifest}"
     assert codex_manifest.is_file(), f"Codex plugin manifest not at {codex_manifest}"
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    assert data["name"] == "conversate"
-    assert data.get("x-installed-by") == "conversate"
-    for skill in CONV_SKILLS:
+    assert data["name"] == "relay"
+    assert data.get("x-installed-by") == "relay"
+    for skill in RELAY_SKILLS:
         skill_md = plugin_root / "skills" / skill / "SKILL.md"
         assert skill_md.is_file(), f"missing skill {skill!r} at {skill_md}"
     # The mode must NOT have run the full install path.
@@ -1721,7 +1681,7 @@ def test_claude_plugin_only_dry_run_writes_nothing(tmp_path):
 def test_claude_plugin_only_defaults_to_home_plugin_installation_root(tmp_path):
     # Uses --dry-run so nothing is written; asserts only on the emitted path line.
     home = tmp_path / "home"
-    root = (home / ".conversate").resolve()
+    root = (home / ".relay").resolve()
     proc = install_default(home, "--claude-plugin-only", "--dry-run")
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert f"plugin_installation_root = {root}" in proc.stdout.splitlines()

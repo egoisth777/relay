@@ -5,10 +5,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__CONVERSATE_VERIFIED_INTERPRETER__ hooks/codex/conv_turn_counter.py",
-            "commandWindows": "__CONVERSATE_VERIFIED_INTERPRETER_WINDOWS__ hooks/codex/conv_turn_counter.py",
+            "command": "__RELAY_BINARY__ hook --agent codex",
+            "commandWindows": "__RELAY_BINARY_WINDOWS__ hook --agent codex",
+            "x-installed-by": "relay",
             "timeout": 10,
-            "statusMessage": "conversate auto-save turn counter"
+            "statusMessage": "Relay session handoff reminder"
           }
         ]
       }

@@ -1,24 +1,24 @@
 {
-  "name": "conversate",
+  "name": "relay",
   "version": "0.1.0",
-  "description": "Plugin-owned skills for the Conversate conversation recorder: save, resume, list, park, sidekick, return, continue, and regen topic-bound records in the Conversation database.",
+  "description": "Relay persistent session handoffs: save, resume, list, park, sidekick, return, continue, and regen topic-bound records that carry distilled runtime context into later sessions.",
   "author": {
-    "name": "conversate"
+    "name": "relay"
   },
   "license": "MIT",
-  "keywords": ["conversation", "memory", "checkpoint", "resume"],
+  "keywords": ["session", "handoff", "memory", "checkpoint", "resume"],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Conversate",
-    "shortDescription": "Save and resume distilled agent conversations.",
-    "longDescription": "Conversate stores topic-bound conversations as distilled, resumable records in the Conversation database. Codex exposes the same conversate verb inventory as the shipped skills: /conversate:save, /conversate:resume, /conversate:list, /conversate:park, /conversate:sidekick, /conversate:return, /conversate:continue, and /conversate:regen.",
-    "developerName": "conversate",
+    "displayName": "Relay",
+    "shortDescription": "Carry distilled runtime context into the next session.",
+    "longDescription": "Relay turns a session's runtime artifacts into compact, resumable handoffs. Use /relay:save, /relay:resume, /relay:list, /relay:park, /relay:sidekick, /relay:return, /relay:continue, or /relay:regen to preserve the working model, decisions, next steps, and compressed exchange needed for another session to continue without replaying the chat.",
+    "developerName": "relay",
     "category": "Productivity",
     "capabilities": ["Write"],
     "defaultPrompt": [
-      "Run /conversate:save for this checkpoint.",
-      "Run /conversate:resume on the auth discussion.",
-      "Run /conversate:list for open conversations."
+      "Run /relay:save for this handoff.",
+      "Run /relay:resume on the auth handoff.",
+      "Run /relay:list for open handoffs."
     ]
   }
 }

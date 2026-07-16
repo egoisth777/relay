@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -68,7 +70,7 @@ class CliEdgeCasesTest(unittest.TestCase):
         self.tmp = Path(self._tmp.name).resolve()
         self.home = self.tmp / "home"
         self.env = clean_env(home=self.home)
-        self.root = self.home / ".conversate"
+        self.root = self.home / ".relay"
         self.db = self.root / "convs"
         self.addCleanup(self._tmp.cleanup)
 
@@ -87,7 +89,7 @@ class CliEdgeCasesTest(unittest.TestCase):
 
     def test_relative_conv_root_before_subcommand_resolves_from_cwd(self) -> None:
         proc = run_cli(
-            ["--conv-root", Path("nested") / ".." / "compat store", "doctor"],
+            ["--relay-root", Path("nested") / ".." / "compat store", "doctor"],
             cwd=self.tmp,
             env=self.env,
         )
@@ -99,6 +101,45 @@ class CliEdgeCasesTest(unittest.TestCase):
         self.assertEqual(Path(out["conversation_database"]), expected / "convs")
         self.assertEqual(out["resolution"]["layer"], "compat-flag")
         self.assertFalse(self.root.exists(), "explicit compatibility root must not create the default root")
+
+    def test_read_commands_do_not_create_write_lock_or_invalid_root(self) -> None:
+        created = run_cli(
+            ["upsert", "--stdin"],
+            cwd=self.tmp,
+            env=self.env,
+            input=payload("read-only dispatch", cid="conv_260123_read-only"),
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        lock = self.root / ".semble" / "write.lock"
+        lock.unlink()
+
+        commands = [
+            (["list", "--json"], lambda out: self.assertEqual(out[0]["id"], "conv_260123_read-only")),
+            (
+                ["show", "conv_260123_read-only"],
+                lambda out: self.assertEqual(out["id"], "conv_260123_read-only"),
+            ),
+            (
+                ["search", "read-only dispatch"],
+                lambda out: self.assertEqual(out[0]["id"], "conv_260123_read-only"),
+            ),
+            (["doctor"], lambda out: self.assertEqual(out["records"], 1)),
+        ]
+        for args, assert_output in commands:
+            with self.subTest(args=args):
+                proc = run_cli(args, cwd=self.tmp, env=self.env)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                assert_output(load_json(proc))
+                self.assertFalse(lock.exists())
+
+        invalid_root = self.tmp / "invalid-command-root"
+        invalid = run_cli(
+            ["--relay-root", invalid_root, "invalid-command"],
+            cwd=self.tmp,
+            env=self.env,
+        )
+        self.assertEqual(invalid.returncode, 2, invalid.stderr)
+        self.assertFalse(invalid_root.exists())
 
     def test_odd_filename_and_status_record_does_not_break_record_commands(self) -> None:
         self.db.mkdir(parents=True)
@@ -227,7 +268,7 @@ class CliEdgeCasesTest(unittest.TestCase):
         doctor_out = load_json(doctor)
         self.assertEqual(doctor_out["records"], 1)
         self.assertFalse(doctor_out["index_health"]["valid"])
-        self.assertIn("missing conversation record", doctor_out["index_health"]["error"])
+        self.assertIn("missing relay record", doctor_out["index_health"]["error"])
 
         listed = run_cli(["list", "--json"], cwd=self.tmp, env=self.env)
         self.assertEqual(listed.returncode, 0, listed.stderr)
@@ -354,7 +395,7 @@ class CliEdgeCasesTest(unittest.TestCase):
         )
 
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("Conversation database", proc.stderr)
+        self.assertIn("Relay archive", proc.stderr)
         self.assertFalse((self.root / "outside.md").exists())
         self.assertEqual(list(self.db.glob("*.md")) if self.db.exists() else [], [])
 
@@ -378,14 +419,14 @@ class CliEdgeCasesTest(unittest.TestCase):
                     input=payload("portable invalid id", cid=cid),
                 )
                 self.assertEqual(proc.returncode, 2, proc.stdout)
-                self.assertIn("conv:", proc.stderr)
+                self.assertIn("relay:", proc.stderr)
                 self.assertIn("portable filename", proc.stderr)
                 self.assertNotIn("Traceback", proc.stderr)
                 self.assertEqual(list(self.db.glob("*.md")) if self.db.exists() else [], [])
 
     def test_upsert_rejects_invalid_ref_ids_and_writes_nothing(self) -> None:
         invalid_refs = [
-            ("../outside", "Conversation database"),
+            ("../outside", "Relay archive"),
             ("bad:name", "portable filename"),
             ("NUL.txt", "portable filename"),
             ("bad ", "portable filename"),
@@ -401,7 +442,7 @@ class CliEdgeCasesTest(unittest.TestCase):
                     input=json.dumps(raw),
                 )
                 self.assertEqual(proc.returncode, 2, proc.stdout)
-                self.assertIn("conv:", proc.stderr)
+                self.assertIn("relay:", proc.stderr)
                 self.assertIn(message, proc.stderr)
                 self.assertNotIn("Traceback", proc.stderr)
                 self.assertEqual(list(self.db.glob("*.md")) if self.db.exists() else [], [])
@@ -410,7 +451,7 @@ class CliEdgeCasesTest(unittest.TestCase):
         proc = run_cli(["upsert", "--stdin"], cwd=self.tmp, env=self.env, input="{not-json}")
 
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("conv:", proc.stderr)
+        self.assertIn("relay:", proc.stderr)
         self.assertIn("invalid JSON", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
@@ -418,7 +459,7 @@ class CliEdgeCasesTest(unittest.TestCase):
         proc = run_cli(["upsert", "--json", self.tmp / "missing.json"], cwd=self.tmp, env=self.env)
 
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("conv:", proc.stderr)
+        self.assertIn("relay:", proc.stderr)
         self.assertIn("cannot read JSON", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
@@ -426,10 +467,10 @@ class CliEdgeCasesTest(unittest.TestCase):
         root_file = self.tmp / "not-a-root"
         root_file.write_text("not a directory", encoding="utf-8")
 
-        proc = run_cli(["--conv-root", root_file, "list", "--json"], cwd=self.tmp, env=self.env)
+        proc = run_cli(["--relay-root", root_file, "list", "--json"], cwd=self.tmp, env=self.env)
 
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("conv:", proc.stderr)
+        self.assertIn("relay:", proc.stderr)
         self.assertIn("Plugin installation root", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
@@ -438,7 +479,7 @@ class CliEdgeCasesTest(unittest.TestCase):
             with self.subTest(args=args):
                 proc = run_cli(args, cwd=self.tmp, env=self.env)
                 self.assertEqual(proc.returncode, 2, proc.stdout)
-                self.assertIn("conv:", proc.stderr)
+                self.assertIn("relay:", proc.stderr)
                 self.assertIn("--limit", proc.stderr)
                 self.assertNotIn("Traceback", proc.stderr)
 
@@ -447,7 +488,7 @@ class CliEdgeCasesTest(unittest.TestCase):
 
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertIn("not found", proc.stderr)
-        self.assertIn("Conversation database", proc.stderr)
+        self.assertIn("Relay archive", proc.stderr)
         self.assertIn("list", proc.stderr)
         self.assertIn("search", proc.stderr)
 
@@ -477,5 +518,77 @@ class CliEdgeCasesTest(unittest.TestCase):
         self.assertIn("search", proc.stderr)
 
 
+    def test_search_uses_semble_result_and_falls_back_to_body_search(self) -> None:
+        self.db.mkdir(parents=True)
+        semantic_query = "semantic-nebula;echo injected&pipe|"
+        semble_hit = self.db / "2026-01-22_beta.md"
+        body_hit = self.db / "2026-01-21_alpha.md"
+        body_hit.write_text(
+            record_text(
+                cid="conv_260121_alpha",
+                topic="alpha catalog",
+                marker="semantic-nebula body-only result",
+            ),
+            encoding="utf-8",
+        )
+        semble_hit.write_text(
+            record_text(
+                cid="conv_260122_beta",
+                topic="beta catalog",
+                marker="unrelated body",
+            ),
+            encoding="utf-8",
+        )
+
+        fake_dir = self.tmp / "fake-bin"
+        fake_dir.mkdir()
+        args_file = self.tmp / "semble-args.json"
+        runner = self.tmp / "search" if os.name == "nt" else fake_dir / "semble_runner.py"
+        runner.write_text(
+            """import json
+import os
+import sys
+from pathlib import Path
+
+Path(os.environ["SEMBLE_ARGS_FILE"]).write_text(
+    json.dumps(sys.argv), encoding="utf-8"
+)
+if os.environ.get("SEMBLE_EXIT") == "1":
+    raise SystemExit(7)
+print(os.environ["SEMBLE_OUTPUT"])
+""",
+            encoding="utf-8",
+        )
+        if os.name == "nt":
+            fake = fake_dir / "semble.exe"
+            shutil.copy2(sys.executable, fake)
+        else:
+            fake = fake_dir / "semble"
+            fake.write_text(
+                f"#!{sys.executable}\n"
+                + runner.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+
+        env = dict(self.env)
+        env["PATH"] = os.pathsep.join([str(fake_dir), env.get("PATH", "")])
+        env["SEMBLE_ARGS_FILE"] = str(args_file)
+        env["SEMBLE_OUTPUT"] = "convs/2026-01-22_beta.md"
+
+        semantic = run_cli(["search", semantic_query], cwd=self.tmp, env=env)
+        self.assertEqual(semantic.returncode, 0, semantic.stderr)
+        semantic_records = load_json(semantic)
+        self.assertEqual([record["id"] for record in semantic_records], ["conv_260122_beta"])
+        self.assertEqual(semantic_records[0]["layer"], "semble")
+        recorded_args = json.loads(args_file.read_text(encoding="utf-8"))
+        self.assertEqual(recorded_args.count(semantic_query), 1)
+
+        env["SEMBLE_EXIT"] = "1"
+        fallback = run_cli(["search", semantic_query], cwd=self.tmp, env=env)
+        self.assertEqual(fallback.returncode, 0, fallback.stderr)
+        fallback_records = load_json(fallback)
+        self.assertEqual([record["id"] for record in fallback_records], ["conv_260121_alpha"])
+        self.assertEqual(fallback_records[0]["layer"], "semble-body-fallback")
 if __name__ == "__main__":
     unittest.main()

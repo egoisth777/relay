@@ -1,9 +1,8 @@
 """Cross-cutting inventory checks for the global root contract."""
 from __future__ import annotations
 
-import subprocess
-import sys
 import re
+import sys
 from pathlib import Path
 
 
@@ -12,11 +11,8 @@ ROOT = TESTS_DIR.parent
 
 if str(TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(TESTS_DIR))
-if str(ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(ROOT / "scripts"))
 
-from _util import clean_env  # noqa: E402
-import conv_cli  # noqa: E402
+from _util import clean_env, run_cli  # noqa: E402
 import test_agent_facing_text_contract as text_contract  # noqa: E402
 
 
@@ -32,7 +28,9 @@ REQUIRED_CLI_SUBCOMMANDS = {
     "list",
     "search",
     "show",
+    "import",
     "doctor",
+    "hook",
 }
 
 FORBIDDEN_HELP_TERMS = (
@@ -42,8 +40,8 @@ FORBIDDEN_HELP_TERMS = (
     "active store",
     "payload",
     "bundle",
-    "<cwd>/.conversate",
-    "CONVERSATE_ROOT",
+    "<cwd>/.relay",
+    "RELAY_ROOT",
     "BRAIN_CONV",
 )
 
@@ -67,21 +65,12 @@ def expected_agent_text_surfaces() -> set[str]:
 
 
 def cli_subcommands() -> set[str]:
-    parser = conv_cli.build_parser()
-    for action in parser._actions:
-        if getattr(action, "dest", None) == "cmd":
-            return set(action.choices)
-    raise AssertionError("conv_cli parser has no subcommand inventory")
+    proc = run_cli_help("--help")
+    return set(re.findall(r"^  ([a-z-]+)\s+", proc.stdout, re.MULTILINE))
 
 
 def run_cli_help(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "conv_cli.py"), *args],
-        cwd=str(ROOT),
-        env=clean_env(),
-        capture_output=True,
-        text=True,
-    )
+    return run_cli(args, cwd=ROOT, env=clean_env())
 
 
 def normalized(text: str) -> str:
@@ -108,7 +97,7 @@ def test_cli_help_inventory_exercises_every_subcommand() -> None:
         assert proc.returncode == 0, proc.stderr + proc.stdout
         output = normalized(proc.stdout)
         assert "Plugin installation root" in output
-        assert "~/.conversate" in output
+        assert "~/.relay" in output
         lowered = output.lower()
         for term in FORBIDDEN_HELP_TERMS:
             assert term.lower() not in lowered, f"{args} help contains {term!r}"

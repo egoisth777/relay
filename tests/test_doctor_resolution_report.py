@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -51,7 +52,7 @@ class DoctorResolutionReportTest(unittest.TestCase):
         self.tmp = Path(self._tmp.name).resolve()
         self.home = self.tmp / "home"
         self.env = clean_env(home=self.home)
-        self.root = self.home / ".conversate"
+        self.root = self.home / ".relay"
         self.addCleanup(self._tmp.cleanup)
 
     def test_reports_default_global_paths(self) -> None:
@@ -71,7 +72,7 @@ class DoctorResolutionReportTest(unittest.TestCase):
 
     def test_reports_explicit_compatibility_root(self) -> None:
         root = self.tmp / "compat-root"
-        proc = run_cli(["doctor", "--conv-root", root], cwd=self.tmp, env=self.env)
+        proc = run_cli(["doctor", "--relay-root", root], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
 
@@ -82,7 +83,7 @@ class DoctorResolutionReportTest(unittest.TestCase):
 
     def test_reports_compatibility_root_when_flag_precedes_subcommand(self) -> None:
         root = self.tmp / "compat-root"
-        proc = run_cli(["--conv-root", root, "doctor"], cwd=self.tmp, env=self.env)
+        proc = run_cli(["--relay-root", root, "doctor"], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
 
@@ -93,12 +94,12 @@ class DoctorResolutionReportTest(unittest.TestCase):
 
     def test_reports_ignored_legacy_env_without_changing_default(self) -> None:
         env_root = self.tmp / "legacy-env-root"
-        proc = run_cli(["doctor"], cwd=self.tmp, env=clean_env(home=self.home, CONVERSATE_ROOT=env_root))
+        proc = run_cli(["doctor"], cwd=self.tmp, env=clean_env(home=self.home, RELAY_ROOT=env_root))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
 
         self.assertEqual(Path(out["plugin_installation_root"]), self.root)
-        self.assertEqual(out["resolution"]["ignored_legacy_env"], ["CONVERSATE_ROOT"])
+        self.assertEqual(out["resolution"]["ignored_legacy_env"], ["RELAY_ROOT"])
         self.assertFalse(env_root.exists())
 
     def test_warns_on_records_missing_resumption_sections(self) -> None:
@@ -169,7 +170,7 @@ a
         self.assertTrue(installer["available"], installer)
         self.assertEqual(installer["returncode"], 0, installer)
         self.assertIn("--doctor-fix", installer["command"])
-        self.assertTrue((self.root / "scripts" / "conv_cli.py").is_file())
+        self.assertTrue((self.root / "bin" / ("relay.exe" if os.name == "nt" else "relay")).is_file())
         self.assertTrue((self.home / ".codex" / "hooks.json").is_file())
         self.assertEqual((self.root / ".gitignore").read_text(encoding="utf-8"), ".semble/\nindex.jsonl\n__pycache__/\n")
 
@@ -263,7 +264,7 @@ fresh summary
 
     def test_core_cli_help_uses_current_root_terms(self) -> None:
         expectations = {
-            ("--help",): ("Plugin installation root", "Conversation database"),
+            ("--help",): ("Plugin installation root", "Relay archive"),
             ("init", "--help"): ("Plugin installation root",),
             ("list", "--help"): ("Plugin installation root",),
             ("search", "--help"): ("Plugin installation root",),

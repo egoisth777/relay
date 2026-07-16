@@ -1,7 +1,7 @@
 """CLI global root defaults.
 
-Contract: normal CLI commands use the Plugin installation root at `~/.conversate/`
-and the Conversation database at `~/.conversate/convs/`. Legacy cwd markers and
+Contract: normal CLI commands use the Plugin installation root at `~/.relay/`
+and the Relay archive at `~/.relay/convs/`. Legacy cwd markers and
 environment roots are not default resolution inputs.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def payload(topic: str, *, cid: str | None = None, refs: list[dict[str, str]] | 
 
 
 def plant_legacy_marker_shape(work: Path) -> None:
-    (work / ".conversate").mkdir(exist_ok=True)
+    (work / ".relay").mkdir(exist_ok=True)
     (work / ".conv-root").write_text("", encoding="utf-8")
     (work / "conv").mkdir(exist_ok=True)
 
@@ -44,7 +44,7 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         self.tmp = Path(self._tmp.name).resolve()
         self.home = self.tmp / "home"
         self.env = clean_env(home=self.home)
-        self.root = self.home / ".conversate"
+        self.root = self.home / ".relay"
         self.db = self.root / "convs"
         self.addCleanup(self._tmp.cleanup)
 
@@ -53,10 +53,10 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(load_json(proc), [])
         self.assertTrue(self.db.is_dir())
-        self.assertFalse((self.tmp / ".conversate").exists())
+        self.assertFalse((self.tmp / ".relay").exists())
 
     def test_init_uses_global_root_even_when_cwd_marker_shape_exists(self) -> None:
-        cwd_root = self.tmp / ".conversate"
+        cwd_root = self.tmp / ".relay"
         plant_legacy_marker_shape(self.tmp)
 
         proc = run_cli(["init"], cwd=self.tmp, env=self.env)
@@ -72,7 +72,7 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         proc = run_cli(
             ["doctor"],
             cwd=self.tmp,
-            env=clean_env(home=self.home, CONVERSATE_ROOT=env_root, BRAIN_CONV=self.tmp / "brain-root"),
+            env=clean_env(home=self.home, RELAY_ROOT=env_root, BRAIN_CONV=self.tmp / "brain-root"),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
@@ -81,7 +81,7 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         self.assertEqual(Path(out["conversation_database"]), self.db)
         self.assertEqual(out["resolution"]["layer"], "default-global")
         self.assertFalse(out["resolution"]["compatibility"])
-        self.assertEqual(out["resolution"]["ignored_legacy_env"], ["CONVERSATE_ROOT", "BRAIN_CONV"])
+        self.assertEqual(out["resolution"]["ignored_legacy_env"], ["RELAY_ROOT", "BRAIN_CONV"])
         self.assertFalse(env_root.exists())
 
     def test_write_command_ignores_legacy_env_roots_by_default(self) -> None:
@@ -90,19 +90,19 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         proc = run_cli(
             ["upsert", "--stdin"],
             cwd=self.tmp,
-            env=clean_env(home=self.home, CONVERSATE_ROOT=env_root, BRAIN_CONV=brain_root),
+            env=clean_env(home=self.home, RELAY_ROOT=env_root, BRAIN_CONV=brain_root),
             input=payload("env ignored", cid="conv_260104_env-ignored"),
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         rel = load_json(proc)["file"]
 
         self.assertTrue((self.root / rel).is_file())
-        self.assertFalse(env_root.exists(), "CONVERSATE_ROOT must not become the default Plugin installation root")
+        self.assertFalse(env_root.exists(), "RELAY_ROOT must not become the default Plugin installation root")
         self.assertFalse(brain_root.exists(), "BRAIN_CONV must not become the default Plugin installation root")
 
     def test_explicit_conv_root_remains_compatibility_override(self) -> None:
         compat_root = self.tmp / "compat-root"
-        proc = run_cli(["doctor", "--conv-root", compat_root], cwd=self.tmp, env=self.env)
+        proc = run_cli(["doctor", "--relay-root", compat_root], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
 
@@ -161,10 +161,10 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         self.assertEqual(load_json(rebuilt)["records"], 2)
 
     def test_read_commands_ignore_cwd_compatibility_root_without_flag(self) -> None:
-        local_root = self.tmp / ".conversate"
-        self.assertEqual(run_cli(["init", "--conv-root", local_root], cwd=self.tmp, env=self.env).returncode, 0)
+        local_root = self.tmp / ".relay"
+        self.assertEqual(run_cli(["init", "--relay-root", local_root], cwd=self.tmp, env=self.env).returncode, 0)
         local_upsert = run_cli(
-            ["upsert", "--stdin", "--conv-root", local_root],
+            ["upsert", "--stdin", "--relay-root", local_root],
             cwd=self.tmp,
             env=self.env,
             input=payload("local only", cid="conv_260105_local-only"),
@@ -182,7 +182,7 @@ class GlobalRootDefaultsTest(unittest.TestCase):
 
         shown = run_cli(["show", "conv_260105_local-only"], cwd=self.tmp, env=self.env)
         self.assertEqual(shown.returncode, 2)
-        self.assertIn("conv:", shown.stderr)
+        self.assertIn("relay:", shown.stderr)
         self.assertNotIn("Traceback", shown.stderr)
 
     def test_rebuild_index_uses_only_global_conversation_database(self) -> None:
@@ -195,7 +195,7 @@ class GlobalRootDefaultsTest(unittest.TestCase):
         )
         self.assertEqual(global_upsert.returncode, 0, global_upsert.stderr)
 
-        local_db = self.tmp / ".conversate" / "convs"
+        local_db = self.tmp / ".relay" / "convs"
         local_db.mkdir(parents=True)
         plant_legacy_marker_shape(self.tmp)
         (local_db / "2026-01-03_local.md").write_text(

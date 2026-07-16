@@ -1,12 +1,12 @@
 {
-  "name": "conversate",
-  "description": "Conversate conversation recorder — the Conversate plugin marketplace.",
-  "owner": { "name": "conversate" },
+  "name": "relay",
+  "description": "Relay session handoff system — the Relay plugin marketplace.",
+  "owner": { "name": "relay" },
   "plugins": [
     {
-      "name": "conversate",
+      "name": "relay",
       "source": "./",
-      "description": "Save, resume, list, park, sidekick, return, continue, and regen topic-bound conversations as distilled, resumable records in the Conversation database."
+      "description": "Capture runtime artifacts, distill durable handoffs, and resume them in later sessions."
     }
   ]
 }

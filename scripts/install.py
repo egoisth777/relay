@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Conversate cross-agent installer.
+"""Relay cross-agent installer.
 
-Installs Conversate runtime files into the universal installation root, creates the
-Conversation database, installs the Conversate plugin skill group at the canonical
+Installs Relay runtime files into the universal installation root, creates the
+Relay archive, installs the Relay plugin skill group at the canonical
 installed plugin root, and writes scan entrypoints in real agent config surfaces:
 
-  ~/.claude/skills/conversate (Claude Code)
-  ~/.codex/skills/conversate  (Codex)
+  ~/.claude/skills/relay (Claude Code)
+  ~/.codex/skills/relay  (Codex)
 
-Stdlib only. Conversation records under `convs/` are never deleted or overwritten
+Stdlib only. Relay records under `convs/` are never deleted or overwritten
 by any flag.
 
 Usage:
@@ -30,17 +30,23 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-CONVERSATE_DIRNAME = ".conversate"
-COPY_MARKER = ".conversate-installed-copy"
+RELAY_DIRNAME = ".relay"
+COPY_MARKER = ".relay-installed-copy"
 
-# Runtime files copied into the universal installation root. Explicit allow-list
-# (not copy-all-minus) so tests, .git, .arca, convs data, etc. are never picked up.
-PAYLOAD_FILES = ("LICENSE", "scripts/conv_cli.py", "scripts/install.py")
+# Runtime files copied into the universal installation root. The Rust binary is
+# the only hook runtime; Python remains only the installer bootstrap.
+PAYLOAD_FILES = ("LICENSE", "scripts/install.py")
 PAYLOAD_DIRS = ("references",)
-# Universal-root SKILL.md keeps frontmatter `name: conversate`, so it is sourced
-# from the base skill, NOT the root plugin entrypoint SKILL.md (which is name: conversate
-# and is consumed by the plugin walk -> <T>/conversate/SKILL.md). src relpath -> dst relpath.
-PAYLOAD_FILE_MAP = {("skills", "conversate", "SKILL.md"): ("SKILL.md",)}
+BINARY_BASENAME = "relay"
+HOOK_PAYLOAD_FILES = (
+    "codex/hooks.json",
+    "claude/settings-snippet.json",
+    "pi/relay-turn-counter.ts",
+)
+# Universal-root SKILL.md keeps frontmatter `name: relay`, so it is sourced
+# from the base skill, NOT the root plugin entrypoint SKILL.md (which is name: relay
+# and is consumed by the plugin walk -> <T>/relay/SKILL.md). src relpath -> dst relpath.
+PAYLOAD_FILE_MAP = {("skills", "relay", "SKILL.md"): ("SKILL.md",)}
 HOOK_SOURCE_DIR = "hooks"
 IGNORE_DIR_NAMES = {"__pycache__", ".git", ".semble", "convs", ".arca"}
 IGNORE_SUFFIXES = {".pyc", ".pyo"}
@@ -50,33 +56,34 @@ ALL_AGENTS = ("claude", "pi", "omp", "codex")
 # Agents that historically resolved shared skills/plugins via .agents/skills/.
 AGENTS_DIR_CONSUMERS = {"pi", "omp", "codex"}
 
+# Legacy surfaces are inspection-only compatibility evidence. Relay never creates,
+# migrates, deletes, or rewrites them; the explicit `relay import --from` command is
+# the sole path that may copy legacy records into a Relay archive.
 LEGACY_CLAUDE_LINK = (".claude", "skills", "conversate")
 LEGACY_AGENTS_LINK = (".agents", "skills", "conversate")
-CANONICAL_PLUGIN_DEST = ("conversate",)
-# Prior canonical installed plugin root (<target>/conv). Superseded by
-# CANONICAL_PLUGIN_DEST (<target>/conversate); migrated/removed on
-# install/update/repair/uninstall so both install roots do not coexist.
-LEGACY_CANONICAL_PLUGIN_DEST = ("conv",)
+CANONICAL_PLUGIN_DEST = ("relay",)
+LEGACY_CANONICAL_PLUGIN_DEST = ("conversate",)
+OLDER_CANONICAL_PLUGIN_DEST = ("conv",)
 LEGACY_CLAUDE_PLUGIN_DEST = (".claude", "skills", "conv")
 LEGACY_AGENTS_PLUGIN_DEST = (".agents", "skills", "conv")
-AGENT_SKILL_ENTRYPOINT = ("skills", "conversate")
+AGENT_SKILL_ENTRYPOINT = ("skills", "relay")
 # Prior-namespace real-home scan entrypoints (skills/conv under each agent's own
-# config surface). Superseded by AGENT_SKILL_ENTRYPOINT; migrated/removed on
-# install/update/repair/uninstall so both visible namespaces do not coexist.
+# config surface). They remain untouched for compatibility while Relay creates its
+# separate skills/relay entrypoints.
 LEGACY_AGENT_SKILL_ENTRYPOINT = ("skills", "conv")
 
 # Hook install destinations (relative to target).
 # pi's current user-level extension surface is ~/.pi/agent/extensions/.
-PI_HOOK_DEST = (".pi", "agent", "extensions", "conv-turn-counter.ts")
-OMP_HOOK_DEST = (".omp", "hooks", "pre", "conv-turn-counter.ts")
+PI_HOOK_DEST = (".pi", "agent", "extensions", "relay-turn-counter.ts")
+OMP_HOOK_DEST = (".omp", "hooks", "pre", "relay-turn-counter.ts")
 CODEX_HOOKS_JSON = (".codex", "hooks.json")
 CLAUDE_SETTINGS = (".claude", "settings.json")
 
-# Shared Conversate plugin skill group. The plugin root IS the repo root
+# Shared Relay plugin skill group. The plugin root IS the repo root
 # (repo root == plugin root), so the source is ctx.source itself. Only these named
 # components are copied into the installed plugin root — never an rglob of the whole
 # checkout (which would sweep scripts/tests/tools/references/README/LICENSE). `hooks`
-# is included deliberately: it plants a pristine <T>/conversate/hooks mirror alongside the
+# is included deliberately: it plants a pristine <T>/relay/hooks mirror alongside the
 # canonical <T>/hooks, both generated from the single source hooks/ tree. Same-source
 # repair (doctor --fix on an installed root) refreshes a corrupted <T>/hooks from
 # that mirror, since <T>/hooks is otherwise its own source and dest (a no-op copy).
@@ -84,21 +91,15 @@ PLUGIN_COMPONENTS = ("SKILL.md", "skills", ".claude-plugin", ".codex-plugin", "h
 CLAUDE_PLUGIN_MANIFEST = (".claude-plugin", "plugin.json")
 CODEX_PLUGIN_MANIFEST = (".codex-plugin", "plugin.json")
 
-# Substrings that identify the Conversate turn-counter hook entry.
-OUR_HOOK_MARKERS = ("conv_turn_counter", "conv-turn-counter")
-OUR_HOOK_STATUS = "conversate auto-save turn counter"
+# Substrings that identify the Relay turn-counter hook entry.
+OUR_HOOK_MARKERS = ("relay_turn_counter", "relay-turn-counter")
+OUR_HOOK_STATUS = "relay session handoff reminder"
 REQUIRED_PLUGIN_SOURCE_FILES = (
     "SKILL.md",
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
 )
-REQUIRED_HOOK_SOURCE_FILES = (
-    "codex/hooks.json",
-    "codex/conv_turn_counter.py",
-    "claude/settings-snippet.json",
-    "claude/conv-turn-counter.ps1",
-    "pi/conv-turn-counter.ts",
-)
+REQUIRED_HOOK_SOURCE_FILES = HOOK_PAYLOAD_FILES
 
 
 class InstallError(Exception):
@@ -179,16 +180,9 @@ class Ctx:
 
 def plugin_source(ctx: Ctx) -> Path:
     # Plugin components (SKILL.md/skills/manifests) live at the repo root normally,
-    # but under <root>/conversate when repairing an installed tree in place.
-    if ctx.repair and _same_path(ctx.source, ctx.target):
-        if ctx.canonical_plugin.is_dir():
-            return ctx.canonical_plugin
-        # In-place repair of a legacy <root>/conv install: the new canonical root does
-        # not exist yet, so read the pristine components from the legacy root (only when
-        # it is conversate-owned) and migrate it into <root>/conversate below.
-        legacy = ctx.universal_root.joinpath(*LEGACY_CANONICAL_PLUGIN_DEST)
-        if _plugin_is_ours(legacy):
-            return legacy
+    # but under <root>/relay when repairing an installed tree in place.
+    if ctx.repair and _same_path(ctx.source, ctx.target) and ctx.canonical_plugin.is_dir():
+        return ctx.canonical_plugin
     return ctx.source
 
 
@@ -196,100 +190,55 @@ def emit(msg: str) -> None:
     print(msg)
 
 
-def _split_python_command(value: str, *, is_windows: bool | None = None) -> tuple[str, ...] | None:
-    value = value.strip()
-    if not value:
-        return None
+def _binary_filename(*, is_windows: bool | None = None) -> str:
     if is_windows is None:
         is_windows = os.name == "nt"
-    unquoted = value.strip("\"'")
-    configured_path = Path(unquoted).expanduser()
-    if configured_path.exists():
-        return (str(configured_path),)
+    return BINARY_BASENAME + (".exe" if is_windows else "")
+
+
+def _binary_relpath(*, is_windows: bool | None = None) -> Path:
+    return Path("bin") / _binary_filename(is_windows=is_windows)
+
+
+def _build_release_binary(source: Path) -> Path:
+    manifest = source / "Cargo.toml"
+    if not manifest.is_file():
+        raise InstallError(f"source does not contain Cargo.toml: {source}")
     try:
-        parts = shlex.split(value, posix=not is_windows)
-    except ValueError as exc:
-        raise InstallError(f"invalid CONVERSATE_PYTHON value: {exc}") from exc
-    if is_windows:
-        parts = [part.strip("\"'") for part in parts]
-    return tuple(parts) if parts else None
-
-
-def _python3_candidates(
-    *,
-    is_windows: bool | None = None,
-    env: dict[str, str] | None = None,
-    current_executable: str | None = None,
-) -> list[tuple[str, ...]]:
-    if is_windows is None:
-        is_windows = os.name == "nt"
-    if env is None:
-        env = os.environ
-    if current_executable is None:
-        current_executable = sys.executable
-
-    candidates: list[tuple[str, ...]] = []
-    configured = env.get("CONVERSATE_PYTHON")
-    if configured:
-        parsed = _split_python_command(configured, is_windows=is_windows)
-        if parsed:
-            candidates.append(parsed)
-    if current_executable:
-        candidates.append((current_executable,))
-    if is_windows:
-        candidates.extend((("py", "-3"), ("python",)))
-    else:
-        candidates.extend((("python3",), ("python",)))
-
-    out: list[tuple[str, ...]] = []
-    seen: set[tuple[str, ...]] = set()
-    for candidate in candidates:
-        if candidate and candidate not in seen:
-            out.append(candidate)
-            seen.add(candidate)
-    return out
-
-
-def _verify_python3_command(command: tuple[str, ...]) -> bool:
-    try:
-        proc = subprocess.run(
-            [
-                *command,
-                "-c",
-                "import sys; raise SystemExit(0 if sys.version_info[0] >= 3 else 1)",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
+        subprocess.run(
+            ["cargo", "build", "--release", "--manifest-path", str(manifest)],
+            cwd=str(source),
+            check=True,
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return proc.returncode == 0
+    except FileNotFoundError as exc:
+        raise InstallError("cargo is required to build the Relay release binary") from exc
+    except subprocess.CalledProcessError as exc:
+        raise InstallError(f"cargo build --release failed with exit code {exc.returncode}") from exc
+    binary = source / "target" / "release" / _binary_filename()
+    if not binary.is_file():
+        raise InstallError(f"cargo build completed but release binary is missing: {binary}")
+    return binary
 
 
-def _resolve_python3_command(
-    *,
-    candidates: list[tuple[str, ...]] | None = None,
-    verifier=_verify_python3_command,
-) -> tuple[str, ...]:
-    if candidates is None:
-        candidates = _python3_candidates()
-    tried: list[str] = []
-    for candidate in candidates:
-        tried.append(" ".join(candidate))
-        if verifier(candidate):
-            return candidate
-    detail = ", ".join(tried) if tried else "(no candidates)"
-    raise InstallError(
-        "codex: no Python 3 interpreter found for hook command; "
-        f"tried {detail}. Set CONVERSATE_PYTHON to a Python 3 executable and re-run."
-    )
+def _resolve_binary_source(ctx: Ctx, *, build: bool = True) -> Path:
+    rel = _binary_relpath()
+    if ctx.repair and _same_path(ctx.source, ctx.target):
+        installed = ctx.target / rel
+        if installed.is_file():
+            return installed
+        raise InstallError(f"repair source is missing installed binary: {installed}")
+    installed = ctx.source / rel
+    if installed.is_file():
+        return installed
+    if not build:
+        release = ctx.source / "target" / "release" / _binary_filename()
+        return release if release.is_file() else installed
+    return _build_release_binary(ctx.source)
 
 
 def _quote_powershell_arg(arg: str) -> str:
     # Single-quoted PowerShell strings are literal; an embedded apostrophe is
-    # represented by two apostrophes. This keeps $, `, &, and backslashes in
-    # hook paths from being interpreted by the shell.
+    # represented by two apostrophes.
     return "'" + arg.replace("'", "''") + "'"
 
 
@@ -302,33 +251,8 @@ def _quote_command(args: tuple[str, ...], *, powershell: bool) -> str:
     return shlex.join(args)
 
 
-def _codex_hook_command(python_command: tuple[str, ...], script_path: Path, *, powershell: bool) -> str:
-    return _quote_command((*python_command, str(script_path)), powershell=powershell)
-
-
-def _resolve_powershell_executable(
-    *,
-    is_windows: bool | None = None,
-    which=shutil.which,
-) -> str:
-    if is_windows is None:
-        is_windows = os.name == "nt"
-    candidates = ("pwsh", "powershell")
-    for candidate in candidates:
-        found = which(candidate)
-        if found:
-            return found
-    return "powershell" if is_windows else "pwsh"
-
-
-def _claude_hook_invocation(ctx: Ctx) -> tuple[str, list[str]]:
-    script_path = ctx.canonical_hooks / "claude" / "conv-turn-counter.ps1"
-    command = _resolve_powershell_executable()
-    args = ["-NoProfile"]
-    if os.name == "nt":
-        args.extend(("-ExecutionPolicy", "Bypass"))
-    args.extend(("-File", str(script_path)))
-    return command, args
+def _codex_hook_command(binary_path: Path, *, powershell: bool) -> str:
+    return _quote_command((str(binary_path), "hook", "--agent", "codex"), powershell=powershell)
 
 
 # --------------------------------------------------------------------------- links
@@ -404,11 +328,13 @@ def remove_link(link_path: Path, ctx: Ctx) -> None:
 
 # -------------------------------------------------------------------- plugin files
 
-def iter_payload(source: Path, plugin_root: Path):
+def iter_payload(source: Path, plugin_root: Path, *, binary_source: Path | None = None):
     for rel in PAYLOAD_FILES:
         p = source / rel
         if p.is_file():
             yield p, rel
+    if binary_source is not None:
+        yield binary_source, _binary_relpath().as_posix()
     for src_parts, dst_parts in PAYLOAD_FILE_MAP.items():
         p = plugin_root.joinpath(*src_parts)
         if p.is_file():
@@ -496,14 +422,13 @@ def prune_stale_payload_files(ctx: Ctx, expected_rels: set[Path]) -> tuple[int, 
         verb = "would remove" if ctx.dry_run else "removed"
         emit(f"plugin files: {verb} {removed_files} stale file(s), {removed_dirs} empty dir(s)")
     return removed_files, removed_dirs
-
-
 def copy_payload(ctx: Ctx) -> None:
     conv_dir = ctx.universal_root
+    binary_source = _resolve_binary_source(ctx, build=not ctx.dry_run)
     plans: list[tuple[Path, Path, str]] = []
     conflicts: list[str] = []
     expected_rels: set[Path] = set()
-    for src, rel in iter_payload(ctx.source, plugin_source(ctx)):
+    for src, rel in iter_payload(ctx.source, plugin_source(ctx), binary_source=binary_source):
         expected_rels.add(Path(rel))
         dest = conv_dir / Path(rel)
         action = _file_copy_action(src, dest, can_replace=ctx.update or ctx.force)
@@ -515,7 +440,7 @@ def copy_payload(ctx: Ctx) -> None:
     if conflicts:
         raise InstallError(
             "plugin files would overwrite differing file(s); re-run with --update to refresh "
-            "plugin files (preserves the Conversation database) or --force. Differing: "
+            "plugin files (preserves the Relay archive) or --force. Differing: "
             + ", ".join(sorted(conflicts))
         )
 
@@ -557,7 +482,7 @@ def run_init(ctx: Ctx) -> None:
         emit(f"would ensure universal installation root: {root}")
         emit(f"would ensure canonical installed plugin root: {ctx.canonical_plugin}")
         emit(f"would ensure canonical hook root: {ctx.canonical_hooks}")
-        emit(f"would ensure Conversation database: {db}")
+        emit(f"would ensure Relay archive: {db}")
         return
     db.mkdir(parents=True, exist_ok=True)
     (root / ".semble").mkdir(parents=True, exist_ok=True)
@@ -565,7 +490,7 @@ def run_init(ctx: Ctx) -> None:
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(".semble/\nindex.jsonl\n__pycache__/\n", encoding="utf-8", newline="\n")
-    emit(f"Conversation database: present at {ctx.disp(db)}")
+    emit(f"Relay archive: present at {ctx.disp(db)}")
 
 
 # ------------------------------------------------------------------------- plugin plan
@@ -581,15 +506,6 @@ def planned_scan_entrypoints(agents: set[str], ctx: Ctx) -> list[tuple[str, Path
     if "codex" in agents:
         dests.append(("codex entrypoint", ctx.codex_scan_entrypoint))
     return dests
-
-
-def remove_legacy_skill_links(ctx: Ctx) -> None:
-    for link in (ctx.target.joinpath(*LEGACY_CLAUDE_LINK), ctx.target.joinpath(*LEGACY_AGENTS_LINK)):
-        kind = link_kind(link)
-        if kind in ("symlink", "junction") and resolves_to(link, ctx.conv_dir):
-            remove_link(link, ctx)
-        elif kind == "copy" and (link / COPY_MARKER).is_file():
-            remove_link(link, ctx)
 
 
 def _create_directory_entrypoint(path: Path, target: Path) -> str:
@@ -631,7 +547,7 @@ def install_scan_entrypoint(ctx: Ctx, path: Path, label: str) -> None:
         installer_owned = _plugin_is_ours(path)
         if not installer_owned and not ctx.force:
             raise InstallError(
-                f"{ctx.disp(path)} exists and is not a conversate-owned entrypoint; "
+                f"{ctx.disp(path)} exists and is not a relay-owned entrypoint; "
                 f"use --force to replace it (backed up to <name>.bak-N)"
             )
         if ctx.dry_run:
@@ -668,7 +584,7 @@ def remove_scan_entrypoint(ctx: Ctx, path: Path, label: str) -> None:
         _remove_dir_or_link(path)
         emit(f"{label}: removed {ctx.disp(path)}")
         return
-    emit(f"{label}: {ctx.disp(path)} not conversate-owned; leaving as-is")
+    emit(f"{label}: {ctx.disp(path)} not relay-owned; leaving as-is")
 
 
 # ----------------------------------------------------------------------------- plugin
@@ -729,16 +645,10 @@ def prune_stale_plugin_files(ctx: Ctx, dest_root: Path, expected_rels: set[Path]
 def _hook_tree_source(ctx: Ctx) -> Path | None:
     roots: list[Path] = []
     if ctx.repair and _same_path(ctx.source, ctx.target):
-        # Same-source repair: prefer the pristine <T>/conversate/hooks mirror
+        # Same-source repair: prefer the pristine <T>/relay/hooks mirror
         # (regenerated from the single source hooks/ tree) so a corrupted <T>/hooks
         # self-heals; <T>/hooks would otherwise be its own source and dest (a no-op).
         roots.append(ctx.canonical_plugin / HOOK_SOURCE_DIR)
-        # Legacy <T>/conv/hooks mirror for an in-place repair of a legacy install that
-        # has not yet migrated to <T>/conversate; only when conversate-owned, so a
-        # foreign <T>/conv is never copied into the new canonical root.
-        legacy_root = ctx.universal_root.joinpath(*LEGACY_CANONICAL_PLUGIN_DEST)
-        if _plugin_is_ours(legacy_root):
-            roots.append(legacy_root / HOOK_SOURCE_DIR)
     roots.append(ctx.source / HOOK_SOURCE_DIR)
     for root in roots:
         if root.is_dir():
@@ -747,15 +657,10 @@ def _hook_tree_source(ctx: Ctx) -> Path | None:
 
 
 def iter_hook_files(src: Path):
-    for f in sorted(src.rglob("*")):
-        if f.is_dir():
-            continue
-        rel = f.relative_to(src)
-        if any(part in IGNORE_DIR_NAMES for part in rel.parts):
-            continue
-        if f.suffix in IGNORE_SUFFIXES:
-            continue
-        yield f, rel
+    for rel_text in HOOK_PAYLOAD_FILES:
+        f = src / Path(rel_text)
+        if f.is_file():
+            yield f, Path(rel_text)
 
 
 def copy_canonical_hooks(ctx: Ctx) -> None:
@@ -817,7 +722,7 @@ def copy_canonical_hooks(ctx: Ctx) -> None:
 
 
 def install_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
-    """Copy the shared Conversate plugin skill group into an installed plugin root."""
+    """Copy the shared Relay plugin skill group into an installed plugin root."""
     src = plugin_source(ctx)
     if not src.joinpath(*CLAUDE_PLUGIN_MANIFEST).is_file():
         emit(f"{label}: source scaffold not found (root .claude-plugin); skipping")
@@ -825,7 +730,7 @@ def install_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
     if dest_root.exists() and not _plugin_is_ours(dest_root):
         if not ctx.force:
             raise InstallError(
-                f"{ctx.disp(dest_root)} exists and is not a conversate-owned plugin; "
+                f"{ctx.disp(dest_root)} exists and is not a relay-owned plugin; "
                 f"use --force to replace it (backed up to <name>.bak-N)"
             )
         if ctx.dry_run:
@@ -876,10 +781,10 @@ def install_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
     prune_stale_plugin_files(ctx, dest_root, expected_rels, label)
     emit(
         f"{label}: {created} created, {updated} updated, {replaced} replaced, "
-        f"{skipped} unchanged in {ctx.disp(dest_root)} (Conversate skill group)"
+        f"{skipped} unchanged in {ctx.disp(dest_root)} (Relay skill group)"
     )
     if created or updated:
-        emit(f"{label}: restart or reload the agent so the Conversate skills are discovered")
+        emit(f"{label}: restart or reload the agent so the Relay skills are discovered")
 
 
 def install_claude_plugin(ctx: Ctx) -> None:
@@ -896,7 +801,7 @@ def _plugin_is_ours(dest_root: Path) -> bool:
             data = _load_json(manifest)
         except Exception:
             continue
-        if isinstance(data, dict) and data.get("x-installed-by") == "conversate":
+        if isinstance(data, dict) and data.get("x-installed-by") == "relay":
             return True
     return False
 
@@ -908,7 +813,7 @@ def remove_agent_plugin(ctx: Ctx, dest_root: Path, label: str) -> None:
         emit(f"{label}: {disp} absent")
         return
     if not _plugin_is_ours(dest_root):
-        emit(f"{label}: {disp} not conversate-owned; leaving as-is")
+        emit(f"{label}: {disp} not relay-owned; leaving as-is")
         return
     if ctx.dry_run:
         emit(f"{label}: would remove {disp}")
@@ -925,41 +830,13 @@ def remove_claude_plugin(ctx: Ctx) -> None:
     remove_agent_plugin(ctx, ctx.canonical_plugin, "canonical plugin")
 
 
-def remove_legacy_plugin_copies(ctx: Ctx) -> None:
-    for label, parts in (
-        ("legacy canonical plugin", LEGACY_CANONICAL_PLUGIN_DEST),
-        ("legacy claude plugin", LEGACY_CLAUDE_PLUGIN_DEST),
-        ("legacy agents plugin", LEGACY_AGENTS_PLUGIN_DEST),
-    ):
-        remove_agent_plugin(ctx, ctx.target.joinpath(*parts), label)
-
-
 def legacy_agent_scan_entrypoints(ctx: Ctx) -> list[tuple[str, Path]]:
-    """Real-home skills/conv scan entrypoints from the prior namespace
-    (under each agent's own config surface), superseded by skills/conversate."""
+    """Real-home skills/conv entrypoints retained for status-only compatibility checks."""
     return [
         ("codex entrypoint (legacy)", ctx.codex_config_surface.joinpath(*LEGACY_AGENT_SKILL_ENTRYPOINT)),
         ("claude entrypoint (legacy)", ctx.claude_config_surface.joinpath(*LEGACY_AGENT_SKILL_ENTRYPOINT)),
     ]
 
-
-def migrate_legacy_agent_scan_entrypoints(ctx: Ctx) -> None:
-    """Remove prior-namespace real-home skills/conv entrypoints when they are ours,
-    so the old visible namespace does not coexist with skills/conversate. Foreign or
-    absent paths are left untouched. Idempotent and dry-run aware."""
-    for label, path in legacy_agent_scan_entrypoints(ctx):
-        kind = link_kind(path)
-        if kind == "missing":
-            continue
-        ours = (kind in ("symlink", "junction") and resolves_to(path, ctx.canonical_plugin)) or _plugin_is_ours(path)
-        if not ours:
-            emit(f"{label}: {ctx.disp(path)} not conversate-owned; leaving as-is")
-            continue
-        if ctx.dry_run:
-            emit(f"{label}: would remove superseded {ctx.disp(path)}")
-            continue
-        _remove_dir_or_link(path)
-        emit(f"{label}: removed superseded {ctx.disp(path)}")
 
 # ----------------------------------------------------------------------------- hooks
 
@@ -997,7 +874,7 @@ def _copy_hook_file(src: Path | None, dest: Path, ctx: Ctx, label: str) -> None:
             return
         if not ctx.force:
             raise InstallError(
-                f"{label}: {ctx.disp(dest)} exists and differs from the conversate hook; "
+                f"{label}: {ctx.disp(dest)} exists and differs from the relay hook; "
                 "use --force to replace it (backed up to <name>.bak-N)"
             )
         if ctx.dry_run:
@@ -1037,7 +914,7 @@ def _merge_hook_events(existing: dict, incoming: dict) -> int:
 
 
 def _replace_our_hook_events(existing: dict, incoming: dict) -> tuple[int, int]:
-    """Replace conversate-owned hook entries while preserving unrelated entries."""
+    """Replace relay-owned hook entries while preserving unrelated entries."""
     removed = added = 0
     for event, entries in incoming.items():
         if not isinstance(entries, list):
@@ -1068,8 +945,7 @@ def _replace_our_hook_events(existing: dict, incoming: dict) -> tuple[int, int]:
 
 
 def _codex_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
-    python_command = _resolve_python3_command()
-    script_path = ctx.canonical_hooks / "codex" / "conv_turn_counter.py"
+    binary_path = ctx.universal_root / _binary_relpath()
     incoming = json.loads(json.dumps(template_hooks))
     rewritten = 0
     for groups in incoming.values():
@@ -1082,18 +958,11 @@ def _codex_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
             for hook in hooks:
                 if not _is_our_hook(hook):
                     continue
-                # Some Codex builds on Windows execute the primary `command`
-                # field instead of `commandWindows`, so both must be runnable
-                # by the local shell when installing on Windows.
-                hook["command"] = _codex_hook_command(
-                    python_command, script_path, powershell=os.name == "nt"
-                )
-                hook["commandWindows"] = _codex_hook_command(
-                    python_command, script_path, powershell=True
-                )
+                hook["command"] = _codex_hook_command(binary_path, powershell=os.name == "nt")
+                hook["commandWindows"] = _codex_hook_command(binary_path, powershell=True)
                 rewritten += 1
     if rewritten == 0:
-        raise InstallError("codex: template contains no conversate hook entry to rewrite")
+        raise InstallError("codex: template contains no relay hook entry to rewrite")
     if _has_template_token(incoming):
         raise InstallError("codex: template placeholder remained after hook command rewrite")
     return incoming
@@ -1101,7 +970,7 @@ def _codex_hook_template_with_command(ctx: Ctx, template_hooks: dict) -> dict:
 
 def _claude_hook_template_with_invocation(ctx: Ctx, template_hooks: dict) -> dict:
     incoming = json.loads(json.dumps(template_hooks))
-    command, args = _claude_hook_invocation(ctx)
+    binary_path = ctx.universal_root / _binary_relpath()
     for groups in incoming.values():
         if not isinstance(groups, list):
             continue
@@ -1114,8 +983,8 @@ def _claude_hook_template_with_invocation(ctx: Ctx, template_hooks: dict) -> dic
                     continue
                 hook.pop("commandWindows", None)
                 hook.pop("shell", None)
-                hook["command"] = command
-                hook["args"] = list(args)
+                hook["command"] = str(binary_path)
+                hook["args"] = ["hook", "--agent", "claude"]
     return incoming
 
 
@@ -1219,10 +1088,10 @@ def wire_hooks(ctx: Ctx, hooks: set[str]) -> None:
     if "claude" in hooks:
         wire_claude_hook(ctx)
     if "pi" in hooks:
-        _copy_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
+        _copy_hook_file(_hook_source(ctx, "hooks", "pi", "relay-turn-counter.ts"),
                         ctx.pi_hook_file, ctx, "pi")
     if "omp" in hooks:
-        _copy_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
+        _copy_hook_file(_hook_source(ctx, "hooks", "pi", "relay-turn-counter.ts"),
                         ctx.omp_hook_file, ctx, "omp")
     if "codex" in hooks:
         wire_codex_hook(ctx)
@@ -1237,10 +1106,8 @@ def print_hook_instructions(ctx: Ctx) -> None:
 # --------------------------------------------------------------------------- uninstall
 
 def _command_text(entry: dict) -> str:
-    # `args` is included so the command+args hook form (e.g.
-    # {"command": "pwsh", "args": ["-File", "...conv-turn-counter.ps1"]}) is
-    # recognized as Conversate-owned by _is_our_hook / _hook_entry_points_to,
-    # not just the single-string command/commandWindows fields.
+    # `args` is included so command+args hook forms are recognized as
+    # Relay-owned by _is_our_hook / _hook_entry_points_to.
     parts = [str(entry.get(k, "")) for k in ("command", "commandWindows")]
     args = entry.get("args")
     if isinstance(args, list):
@@ -1250,7 +1117,7 @@ def _command_text(entry: dict) -> str:
 
 def _has_template_token(value) -> bool:
     if isinstance(value, str):
-        return "__CONVERSATE_" in value
+        return "__RELAY_" in value
     if isinstance(value, dict):
         return any(_has_template_token(v) for v in value.values())
     if isinstance(value, list):
@@ -1264,13 +1131,13 @@ def _hook_file_is_ours(path: Path) -> bool:
     except OSError:
         return False
     lowered = text.lower()
-    return "conversate" in lowered and any(marker in lowered for marker in OUR_HOOK_MARKERS)
+    return "relay" in lowered and any(marker in lowered for marker in OUR_HOOK_MARKERS)
 
 
 def _is_our_hook(entry: dict) -> bool:
     if not isinstance(entry, dict):
         return False
-    if entry.get("x-installed-by") == "conversate":
+    if entry.get("x-installed-by") == "relay":
         return True
     if str(entry.get("statusMessage", "")).strip().lower() == OUR_HOOK_STATUS:
         return True
@@ -1279,7 +1146,7 @@ def _is_our_hook(entry: dict) -> bool:
 
 
 def _strip_our_hooks(hooks_obj: dict) -> int:
-    """Remove conversate-owned command entries from a nested hooks object. Returns count removed."""
+    """Remove relay-owned command entries from a nested hooks object. Returns count removed."""
     removed = 0
     for event in list(hooks_obj.keys()):
         groups = hooks_obj.get(event)
@@ -1316,11 +1183,11 @@ def _unwire_json_hooks(path: Path, ctx: Ctx, label: str, remove_empty_file: bool
         return
     hooks_obj = data.get("hooks")
     if not isinstance(hooks_obj, dict):
-        emit(f"{label}: no conversate hook entries in {ctx.disp(path)}")
+        emit(f"{label}: no relay hook entries in {ctx.disp(path)}")
         return
     removed = _strip_our_hooks(hooks_obj)
     if removed == 0:
-        emit(f"{label}: no conversate hook entries in {ctx.disp(path)}")
+        emit(f"{label}: no relay hook entries in {ctx.disp(path)}")
         return
     if ctx.dry_run:
         emit(f"{label}: would remove {removed} hook entr{'y' if removed == 1 else 'ies'} from {ctx.disp(path)}")
@@ -1345,7 +1212,7 @@ def _remove_hook_file(src: Path | None, path: Path, ctx: Ctx, label: str) -> Non
     if not path.is_file() or not (
         _hook_file_is_ours(path) or (src is not None and filecmp.cmp(src, path, shallow=False))
     ):
-        emit(f"{label}: {ctx.disp(path)} not a conversate-owned hook; leaving as-is")
+        emit(f"{label}: {ctx.disp(path)} not a relay-owned hook; leaving as-is")
         return
     if ctx.dry_run:
         emit(f"{label}: would remove {ctx.disp(path)}")
@@ -1356,20 +1223,15 @@ def _remove_hook_file(src: Path | None, path: Path, ctx: Ctx, label: str) -> Non
 
 def do_uninstall(ctx: Ctx) -> int:
     emit(f"uninstall from universal installation root: {ctx.target}")
-    for link in (ctx.target.joinpath(*LEGACY_CLAUDE_LINK), ctx.target.joinpath(*LEGACY_AGENTS_LINK)):
-        remove_link(link, ctx)
     remove_scan_entrypoint(ctx, ctx.codex_scan_entrypoint, "codex entrypoint")
-    for _label, _path in legacy_agent_scan_entrypoints(ctx):
-        remove_scan_entrypoint(ctx, _path, _label)
     remove_claude_plugin(ctx)
-    remove_legacy_plugin_copies(ctx)
-    _remove_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
+    _remove_hook_file(_hook_source(ctx, "hooks", "pi", "relay-turn-counter.ts"),
                       ctx.pi_hook_file, ctx, "pi")
-    _remove_hook_file(_hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts"),
+    _remove_hook_file(_hook_source(ctx, "hooks", "pi", "relay-turn-counter.ts"),
                       ctx.omp_hook_file, ctx, "omp")
     _unwire_json_hooks(ctx.codex_hooks_json, ctx, "codex", remove_empty_file=True)
     _unwire_json_hooks(ctx.claude_settings_json, ctx, "claude", remove_empty_file=False)
-    emit(f"left Conversation database untouched: {ctx.conversation_database}")
+    emit(f"left Relay archive untouched: {ctx.conversation_database}")
     return 0
 
 
@@ -1381,7 +1243,7 @@ def _expected_file_problems(expected_files, dest_root: Path) -> tuple[list[Path]
     for src, rel in expected_files:
         rel_path = Path(rel)
         dest = dest_root / rel_path
-        if not dest.is_file():
+        if not src.is_file() or not dest.is_file():
             missing.append(rel_path)
         elif not _same_file(src, dest):
             stale.append(rel_path)
@@ -1389,7 +1251,11 @@ def _expected_file_problems(expected_files, dest_root: Path) -> tuple[list[Path]
 
 
 def _payload_artifact_problems(ctx: Ctx) -> tuple[list[Path], list[Path]]:
-    return _expected_file_problems(iter_payload(ctx.source, plugin_source(ctx)), ctx.universal_root)
+    binary_source = _resolve_binary_source(ctx, build=False)
+    return _expected_file_problems(
+        iter_payload(ctx.source, plugin_source(ctx), binary_source=binary_source),
+        ctx.universal_root,
+    )
 
 
 def _plugin_artifact_problems(ctx: Ctx) -> tuple[list[Path], list[Path]]:
@@ -1472,26 +1338,19 @@ def _hook_invocation_is_current(entry: dict, expected_script: Path, *, agent: st
         return False
     if agent == "codex":
         command_windows = entry.get("commandWindows")
-        if not isinstance(command_windows, str) or not command_windows.lstrip().startswith("& "):
-            return False
-        if os.name == "nt" and not command.lstrip().startswith("& "):
-            return False
+        expected_command = _codex_hook_command(expected_script, powershell=os.name == "nt")
+        expected_windows = _codex_hook_command(expected_script, powershell=True)
         return (
-            _hook_text_points_to(command, expected_script)
-            and _hook_text_points_to(command_windows, expected_script)
+            command == expected_command
+            and command_windows == expected_windows
             and "args" not in entry
             and "shell" not in entry
         )
     if agent == "claude":
         args = entry.get("args")
-        if not isinstance(args, list):
-            return False
-        executable = command.replace("\\", "/").rsplit("/", 1)[-1].lower()
-        expected = _norm_hook_text(expected_script)
         return (
-            executable in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
-            and any(str(arg).lower() == "-file" for arg in args)
-            and any(_norm_hook_text(arg) == expected for arg in args)
+            command == str(expected_script)
+            and args == ["hook", "--agent", "claude"]
             and "commandWindows" not in entry
             and "shell" not in entry
         )
@@ -1519,6 +1378,26 @@ def _json_hook_status(path: Path, expected_script: Path, *, agent: str) -> str:
     return "wired outside canonical hook root"
 
 
+def _owned_hook_commands(path: Path) -> list[tuple[str, str]]:
+    """Return configured primary/Windows commands for installer-owned hooks."""
+    entries = _json_hook_entries(path)
+    if not entries:
+        return []
+    commands: list[tuple[str, str]] = []
+    for entry in entries:
+        if not _is_our_hook(entry):
+            continue
+        command = entry.get("command")
+        command_windows = entry.get("commandWindows")
+        commands.append(
+            (
+                command.strip() if isinstance(command, str) else "<missing>",
+                command_windows.strip() if isinstance(command_windows, str) else "",
+            )
+        )
+    return commands
+
+
 def _legacy_hook_config_status(path: Path) -> str:
     if not os.path.lexists(path):
         return "absent"
@@ -1529,7 +1408,7 @@ def _legacy_hook_config_status(path: Path) -> str:
         return "foreign file (invalid hook JSON)"
     if any(_is_our_hook(entry) for entry in entries):
         return "stale installer-owned hook config"
-    return "foreign file (no conversate hook entries)"
+    return "foreign file (no relay hook entries)"
 
 
 def _hook_wired_claude(ctx: Ctx) -> bool:
@@ -1614,7 +1493,7 @@ def do_status(ctx: Ctx) -> int:
     _emit_artifact_problems("runtime files", payload_missing, payload_stale)
     emit(f"plugin files: {'present' if canonical_plugin_present else _artifact_state(plugin_missing, plugin_stale)}")
     _emit_artifact_problems("canonical plugin artifacts", plugin_missing, plugin_stale)
-    emit(f"Conversation database: {'present' if database_present else 'missing'} (convs/, index.jsonl)")
+    emit(f"Relay archive: {'present' if database_present else 'missing'} (convs/, index.jsonl)")
 
     if canonical_plugin_present:
         skills_dir = ctx.canonical_plugin / "skills"
@@ -1625,7 +1504,7 @@ def do_status(ctx: Ctx) -> int:
         n = sum(1 for p in skills_dir.iterdir() if p.is_dir()) if skills_dir.is_dir() else 0
         emit(f"canonical plugin: incomplete ({n} skills; {len(plugin_missing)} missing, {len(plugin_stale)} stale)")
     elif ctx.canonical_plugin.exists():
-        emit("canonical plugin: foreign dir (not conversate-owned)")
+        emit("canonical plugin: foreign dir (not relay-owned)")
     else:
         emit("canonical plugin: not installed")
     emit(f"canonical hooks: {'present' if canonical_hooks_present else _artifact_state(hook_missing, hook_stale)}")
@@ -1640,7 +1519,7 @@ def do_status(ctx: Ctx) -> int:
         link = ctx.target.joinpath(*parts)
         kind = link_kind(link)
         if kind in ("symlink", "junction"):
-            ok = "-> .conversate" if resolves_to(link, root) else "-> (other target!)"
+            ok = "-> .relay" if resolves_to(link, root) else "-> (other target!)"
             emit(f"link {label}: {kind} {ok}")
         elif kind == "copy":
             emit(f"link {label}: copy (not a live link)")
@@ -1649,7 +1528,8 @@ def do_status(ctx: Ctx) -> int:
         else:
             emit(f"link {label}: foreign {kind} (not installer-created)")
 
-    for label, parts in (("legacy canonical plugin conv", LEGACY_CANONICAL_PLUGIN_DEST),
+    for label, parts in (("legacy canonical plugin conversate", LEGACY_CANONICAL_PLUGIN_DEST),
+                         ("older canonical plugin conv", OLDER_CANONICAL_PLUGIN_DEST),
                          ("legacy claude plugin .claude/skills/conv", LEGACY_CLAUDE_PLUGIN_DEST),
                          ("legacy agents plugin .agents/skills/conv", LEGACY_AGENTS_PLUGIN_DEST)):
         plugin_root = ctx.target.joinpath(*parts)
@@ -1658,7 +1538,7 @@ def do_status(ctx: Ctx) -> int:
             n = sum(1 for p in skills_dir.iterdir() if p.is_dir()) if skills_dir.is_dir() else 0
             emit(f"{label}: stale installer-owned copy ({n} skills)")
         elif plugin_root.exists():
-            emit(f"{label}: foreign dir (not conversate-owned)")
+            emit(f"{label}: foreign dir (not relay-owned)")
         else:
             emit(f"{label}: absent")
 
@@ -1667,10 +1547,15 @@ def do_status(ctx: Ctx) -> int:
         path = ctx.target.joinpath(*parts)
         emit(f"{label}: {_legacy_hook_config_status(path)} ({path})")
 
-    emit(f"hook claude: {_json_hook_status(ctx.claude_settings_json, ctx.canonical_hooks / 'claude' / 'conv-turn-counter.ps1', agent='claude')} ({ctx.claude_settings_json})")
+    binary_path = ctx.universal_root / _binary_relpath()
+    emit(f"hook claude: {_json_hook_status(ctx.claude_settings_json, binary_path, agent='claude')} ({ctx.claude_settings_json})")
     emit(f"hook pi: {'wired' if ctx.pi_hook_file.is_file() else 'not wired'}")
     emit(f"hook omp: {'wired' if ctx.omp_hook_file.is_file() else 'not wired'}")
-    emit(f"hook codex: {_json_hook_status(ctx.codex_hooks_json, ctx.canonical_hooks / 'codex' / 'conv_turn_counter.py', agent='codex')} ({ctx.codex_hooks_json})")
+    emit(f"hook codex: {_json_hook_status(ctx.codex_hooks_json, binary_path, agent='codex')} ({ctx.codex_hooks_json})")
+    for command, command_windows in _owned_hook_commands(ctx.codex_hooks_json):
+        emit(f"hook codex command: {command}")
+        if command_windows and command_windows != command:
+            emit(f"hook codex commandWindows: {command_windows}")
     return 0
 
 
@@ -1693,7 +1578,7 @@ def _available_repair_hook_set(ctx: Ctx) -> set[str]:
         hooks.add("claude")
     if _hook_source(ctx, "hooks", "codex", "hooks.json") is not None:
         hooks.add("codex")
-    if _hook_source(ctx, "hooks", "pi", "conv-turn-counter.ts") is not None:
+    if _hook_source(ctx, "hooks", "pi", "relay-turn-counter.ts") is not None:
         if not os.path.lexists(ctx.pi_hook_file) or (
             ctx.pi_hook_file.is_file() and _hook_file_is_ours(ctx.pi_hook_file)
         ):
@@ -1711,6 +1596,18 @@ def _repair_hook_set(ctx: Ctx, value: str | None) -> set[str]:
     return _parse_set(value, ALL_AGENTS, "hooks", allow_none=True)
 
 
+def _update_hook_set(ctx: Ctx, value: str | None) -> set[str]:
+    """Refresh hooks this installation already owns without enabling new hooks.
+
+    `--update` refreshes the canonical hook files, so it must also regenerate the
+    corresponding live agent configuration.  Unlike repair, though, a routine
+    update must not opt an installation into hook hosts it had not selected.
+    """
+    if value is None:
+        return _installed_hook_set(ctx)
+    return _parse_set(value, ALL_AGENTS, "hooks", allow_none=True)
+
+
 def _repair_source_missing(ctx: Ctx) -> list[str]:
     source = ctx.source
     plugin = plugin_source(ctx)
@@ -1718,6 +1615,13 @@ def _repair_source_missing(ctx: Ctx) -> list[str]:
     for rel in PAYLOAD_FILES:
         if not (source / rel).is_file():
             missing.append(rel)
+    binary = (
+        ctx.target / _binary_relpath()
+        if (ctx.repair and _same_path(ctx.source, ctx.target))
+        else _resolve_binary_source(ctx, build=False)
+    )
+    if not binary.is_file() and (ctx.repair and _same_path(ctx.source, ctx.target)):
+        missing.append(_binary_relpath().as_posix())
     for src_parts in PAYLOAD_FILE_MAP:
         if not plugin.joinpath(*src_parts).is_file():
             missing.append("/".join(src_parts))
@@ -1743,37 +1647,8 @@ def validate_repair_source(ctx: Ctx) -> None:
     raise InstallError(
         "repair source is missing installer artifact(s): "
         + ", ".join(missing)
-        + "; run scripts/install.py from a complete conversate checkout to restore installer-owned files"
+        + "; run scripts/install.py from a complete relay checkout to restore installer-owned files"
     )
-
-
-def _prune_empty_legacy_dirs(ctx: Ctx, path: Path) -> None:
-    parent = path.parent
-    while parent != ctx.target and parent.is_dir():
-        try:
-            next(parent.iterdir())
-            return
-        except StopIteration:
-            parent.rmdir()
-            parent = parent.parent
-        except OSError:
-            return
-
-
-def remove_legacy_hook_configs(ctx: Ctx) -> None:
-    for label, parts in (
-        ("legacy nested codex hook", CODEX_HOOKS_JSON),
-        ("legacy nested claude hook", CLAUDE_SETTINGS),
-    ):
-        path = ctx.target.joinpath(*parts)
-        entries = _json_hook_entries(path) if path.is_file() else None
-        if not entries or not any(_is_our_hook(entry) for entry in entries):
-            if os.path.lexists(path):
-                emit(f"{label}: {ctx.disp(path)} not installer-owned; leaving as-is")
-            continue
-        _unwire_json_hooks(path, ctx, label, remove_empty_file=True)
-        if not ctx.dry_run and not os.path.lexists(path):
-            _prune_empty_legacy_dirs(ctx, path)
 
 
 def do_repair(ctx: Ctx, agents: set[str], hooks: set[str]) -> int:
@@ -1782,18 +1657,15 @@ def do_repair(ctx: Ctx, agents: set[str], hooks: set[str]) -> int:
     copy_payload(ctx)
     copy_canonical_hooks(ctx)
     run_init(ctx)
-    remove_legacy_skill_links(ctx)
     for label, dest in planned_plugin_dests(agents, ctx.target):
         install_agent_plugin(ctx, dest, label)
     for label, dest in planned_scan_entrypoints(agents, ctx):
         install_scan_entrypoint(ctx, dest, label)
-    remove_legacy_plugin_copies(ctx)
     if hooks:
         emit(f"repair hooks: {', '.join(sorted(hooks))}")
         wire_hooks(ctx, hooks)
     else:
         emit("repair hooks: none selected (--hooks none or no available hook sources)")
-    remove_legacy_hook_configs(ctx)
     emit("done" if not ctx.dry_run else "dry-run complete")
     return 0
 
@@ -1823,19 +1695,19 @@ def _parse_set(value: str, valid: tuple[str, ...], label: str, allow_none: bool)
 def parse_args(argv):
     p = argparse.ArgumentParser(
         prog="install.py",
-        description="Install Conversate plugin files into the Plugin installation root and create the Conversation database.",
+        description="Install Relay plugin files into the Relay installation root and create the Relay archive.",
     )
-    p.add_argument("--target", help="Plugin installation root (default: ~/.conversate)")
-    p.add_argument("--source", help="Conversate checkout to install from (default: this script's repo root)")
+    p.add_argument("--target", help="Plugin installation root (default: ~/.relay)")
+    p.add_argument("--source", help="Relay checkout to install from (default: this script's repo root)")
     p.add_argument("--agents", default="all", help="comma list of claude,pi,omp,codex or 'all' (default: all)")
-    p.add_argument("--hooks", default=None, help="comma list of claude,pi,omp,codex, 'all', or 'none' (default: none; --repair defaults to available installer-owned hooks)")
-    p.add_argument("--update", action="store_true", help="refresh plugin files while preserving the Conversation database")
+    p.add_argument("--hooks", default=None, help="comma list of claude,pi,omp,codex, 'all', or 'none' (default: none; --update refreshes already-installed hooks; --repair defaults to available installer-owned hooks)")
+    p.add_argument("--update", action="store_true", help="refresh plugin files while preserving the Relay archive")
     p.add_argument("--repair", "--doctor-fix", dest="repair", action="store_true", help="repair installer-owned plugin files and selected/already-wired hooks while preserving convs/")
     p.add_argument("--force", action="store_true", help="overwrite differing plugin files and replace foreign plugin dirs (backs up first)")
-    p.add_argument("--uninstall", action="store_true", help="remove installer-created plugins, legacy links, and hooks; leaves the Conversation database intact")
+    p.add_argument("--uninstall", action="store_true", help="remove Relay-owned plugins and hooks; leaves the Relay archive intact")
     p.add_argument("--status", action="store_true", help="report install state for the Plugin installation root and exit")
     p.add_argument("--dry-run", action="store_true", help="print planned actions; change nothing")
-    p.add_argument("--claude-plugin-only", action="store_true", help="only (un)install the canonical Conversate plugin and ~/.claude/skills/conversate entrypoint")
+    p.add_argument("--claude-plugin-only", action="store_true", help="only (un)install the canonical Relay plugin and ~/.claude/skills/relay entrypoint")
     return p.parse_args(argv)
 
 
@@ -1844,15 +1716,15 @@ def resolve_source(args) -> Path:
         src = Path(args.source).expanduser().resolve()
     else:
         src = Path(__file__).resolve().parent.parent
-    if not (src / "SKILL.md").is_file() or not (src / "scripts" / "conv_cli.py").is_file():
-        raise InstallError(f"source does not look like a conversate checkout (missing SKILL.md or scripts/conv_cli.py): {src}")
+    if not (src / "SKILL.md").is_file() or not (src / "scripts" / "install.py").is_file():
+        raise InstallError(f"source does not look like a relay checkout or installed root (missing SKILL.md or scripts/install.py): {src}")
     return src
 
 
 def resolve_target(args) -> Path:
     if args.target:
         return Path(args.target).expanduser().resolve()
-    return (Path.home() / CONVERSATE_DIRNAME).expanduser().resolve()
+    return (Path.home() / RELAY_DIRNAME).expanduser().resolve()
 
 
 def main(argv=None) -> int:
@@ -1860,6 +1732,16 @@ def main(argv=None) -> int:
         args = parse_args(argv)
         source = resolve_source(args)
         target = resolve_target(args)
+        legacy_root = (Path.home() / ".conversate").expanduser().resolve()
+        try:
+            target.relative_to(legacy_root)
+        except ValueError:
+            pass
+        else:
+            raise InstallError(
+                "refusing to use the legacy Conversate archive as a Relay installation root: "
+                f"{legacy_root}; leave it untouched and run `relay import --from {legacy_root}` instead"
+            )
 
         if target == source and not args.repair:
             raise InstallError(
@@ -1894,17 +1776,20 @@ def main(argv=None) -> int:
                 emit("dry-run: no changes will be made")
             if args.uninstall:
                 remove_claude_plugin(ctx)
-                remove_scan_entrypoint(ctx, ctx.claude_config_surface.joinpath(*LEGACY_AGENT_SKILL_ENTRYPOINT), "claude entrypoint (legacy)")
             else:
                 install_claude_plugin(ctx)
-                migrate_legacy_agent_scan_entrypoints(ctx)
             emit("done" if not ctx.dry_run else "dry-run complete")
             return 0
         if args.uninstall:
             return do_uninstall(ctx)
 
         agents = _parse_set(args.agents, ALL_AGENTS, "agents", allow_none=False)
-        hooks = _repair_hook_set(ctx, args.hooks) if args.repair else _parse_set(args.hooks or "none", ALL_AGENTS, "hooks", allow_none=True)
+        if args.repair:
+            hooks = _repair_hook_set(ctx, args.hooks)
+        elif args.update:
+            hooks = _update_hook_set(ctx, args.hooks)
+        else:
+            hooks = _parse_set(args.hooks or "none", ALL_AGENTS, "hooks", allow_none=True)
 
         emit(f"plugin_source = {source}")
         emit(f"source: {source}")
@@ -1923,13 +1808,10 @@ def main(argv=None) -> int:
         copy_payload(ctx)
         copy_canonical_hooks(ctx)
         run_init(ctx)
-        remove_legacy_skill_links(ctx)
         for label, dest in planned_plugin_dests(agents, target):
             install_agent_plugin(ctx, dest, label)
         for label, dest in planned_scan_entrypoints(agents, ctx):
             install_scan_entrypoint(ctx, dest, label)
-        migrate_legacy_agent_scan_entrypoints(ctx)
-        remove_legacy_plugin_copies(ctx)
         if hooks:
             wire_hooks(ctx, hooks)
         else:

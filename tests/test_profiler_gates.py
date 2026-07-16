@@ -13,7 +13,7 @@ from _util import clean_env
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROFILER = REPO_ROOT / "tools" / "profiler" / "conversate_loading_profiler.py"
+PROFILER = REPO_ROOT / "tools" / "profiler" / "relay_loading_profiler.py"
 
 REQUIRED_OPERATIONS = {
     "skill_load_common_path",
@@ -32,7 +32,7 @@ RUNTIME_COVERAGE_RECORDS = 100
 
 
 def load_profiler() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("conversate_loading_profiler_under_test", PROFILER)
+    spec = importlib.util.spec_from_file_location("relay_loading_profiler_under_test", PROFILER)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -101,7 +101,7 @@ def test_common_path_loader_checks_direct_verbs_before_first_action() -> None:
         verb_detail = detail["verbs"][verb]
         assert len(verb_detail["files"]) == 1
         assert verb_detail["files"][0]["path"] == f"skills/{verb}/SKILL.md"
-        assert "python ~/.conversate/scripts/conv_cli.py" in verb_detail["first_useful_action"]
+        assert "~/.relay/bin/relay" in verb_detail["first_useful_action"]
         assert verb_detail["pre_action_broad_mentions"] == []
 
 
@@ -118,7 +118,7 @@ def test_common_path_gate_fails_deterministic_fake_metrics() -> None:
                     "broad_file_reads": 1,
                     "missing_files": [],
                     "missing_first_actions": ["resume"],
-                    "pre_action_broad_mentions": {"save": ["~/.conversate/references/"]},
+                    "pre_action_broad_mentions": {"save": ["~/.relay/references/"]},
                     "loaded_broad_files": ["references/save.md"],
                 },
             }

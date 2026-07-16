@@ -34,11 +34,11 @@ FULL_PAYLOAD = {
         "goal": "finish the redesign",
         "next_steps": ["write tests", "update docs"],
         "open_questions": ["adapter details?"],
-        "suggested_skills": ["conversate:save"],
+        "suggested_skills": ["relay:save"],
     },
     "user_instructions": ["use PowerShell", "never commit"],
     "condensed_transcript": [
-        {"u": "do the thing", "a": "did the thing (see scripts/conv_cli.py)"},
+        {"u": "do the thing", "a": "did the thing (see relay help)"},
         "note: referenced a commit by hash",
     ],
 }
@@ -72,12 +72,12 @@ class RecordSchemaTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name).resolve()
         self.addCleanup(self._tmp.cleanup)
-        self.root = self.tmp / ".conversate"
-        self.assertEqual(run_cli(["init", "--conv-root", self.root], cwd=self.tmp).returncode, 0)
+        self.root = self.tmp / ".relay"
+        self.assertEqual(run_cli(["init", "--relay-root", self.root], cwd=self.tmp).returncode, 0)
 
     def _upsert(self, payload: dict) -> str:
         proc = run_cli(
-            ["upsert", "--stdin", "--conv-root", self.root],
+            ["upsert", "--stdin", "--relay-root", self.root],
             cwd=self.tmp,
             input=json.dumps(payload),
         )
@@ -85,7 +85,7 @@ class RecordSchemaTest(unittest.TestCase):
         return load_json(proc)["id"]
 
     def _markdown(self, cid: str) -> str:
-        proc = run_cli(["show", cid, "--markdown", "--conv-root", self.root], cwd=self.tmp)
+        proc = run_cli(["show", cid, "--markdown", "--relay-root", self.root], cwd=self.tmp)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 
@@ -185,7 +185,7 @@ d
         before = self._markdown(cid)
 
         proc = run_cli(
-            ["upsert", "--stdin", "--conv-root", self.root],
+            ["upsert", "--stdin", "--relay-root", self.root],
             cwd=self.tmp,
             input=json.dumps(
                 {
@@ -219,7 +219,7 @@ second summary must not replace data
         self.assertIn("  - write tests", md)
         self.assertIn("- open-questions:", md)
         self.assertIn("- suggested-skills:", md)
-        self.assertIn("  - conversate:save", md)
+        self.assertIn("  - relay:save", md)
 
     def test_user_instructions_and_transcript_rendered(self) -> None:
         md = self._markdown(self._upsert(FULL_PAYLOAD))
@@ -248,14 +248,14 @@ second summary must not replace data
 
     def test_rebuild_index_tolerates_legacy_record(self) -> None:
         (self.root / "convs" / "2025-01-01_old.md").write_text(LEGACY_RECORD, encoding="utf-8")
-        proc = run_cli(["rebuild-index", "--conv-root", self.root], cwd=self.tmp)
+        proc = run_cli(["rebuild-index", "--relay-root", self.root], cwd=self.tmp)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(load_json(proc)["records"], 1)
 
     def test_show_tolerates_legacy_record(self) -> None:
         (self.root / "convs" / "2025-01-01_old.md").write_text(LEGACY_RECORD, encoding="utf-8")
-        run_cli(["rebuild-index", "--conv-root", self.root], cwd=self.tmp)
-        proc = run_cli(["show", "conv_250101_old", "--conv-root", self.root], cwd=self.tmp)
+        run_cli(["rebuild-index", "--relay-root", self.root], cwd=self.tmp)
+        proc = run_cli(["show", "conv_250101_old", "--relay-root", self.root], cwd=self.tmp)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(load_json(proc)["id"], "conv_250101_old")
 
