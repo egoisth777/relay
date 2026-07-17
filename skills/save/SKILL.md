@@ -5,67 +5,54 @@ disable-model-invocation: false
 argument-hint: "[id-or-topic]"
 ---
 
-Run the Relay `relay:save` flow for this conversation. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.relay/` by default) and writes records to the Relay archive (`~/.relay/convs/`).
-
-Do not load broad instructions for the common path; this file is enough to save a normal checkpoint.
+Run the Relay flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.relay/` by default) and writes records to the Relay archive (`~/.relay/convs/`). Do not load broad instructions for the common path; this file suffices.
 
 ## Common Path
 
-1. Ensure the Plugin installation root and Relay archive exist:
-   `~/.relay/bin/relay init`
-2. Infer a concise topic and tags from the current conversation. Treat `$ARGUMENTS` as an id or topic hint.
-3. Extract the record in this priority order:
-   - `dict`: agreed terms and meanings. This is the language a cold agent must adopt.
-   - `user-instructions`: standing user directives, constraints, workflow preferences, and tone.
-   - `resume`: `goal`, `next_steps`, `open_questions`, and `suggested_skills`.
-   - `qa`: sharp question/answer pairs; mark unresolved items as `**Q (open):**`.
-   - `condensed-transcript`: a compressed chronological exchange log, not a raw transcript.
-   - `sources`, `insights`, and `decisions`: referenced artifacts, useful realizations, and settled decisions with reasoning.
-4. Pipe the conversation JSON to:
-   `~/.relay/bin/relay upsert --stdin`
-5. The CLI writes the TOML markdown under `~/.relay/convs/`, reconciles refs when present, and rebuilds `~/.relay/index.jsonl`.
-6. For a manual save, report the inferred id/topic and invite a rename. For auto-save, print only `Auto-saved as <id> - rename anytime.`
+1. Initialize: `~/.relay/bin/relay init`
+2. Infer topic/tags; treat `$ARGUMENTS` as id/topic hint.
+3. Extract record in priority order:
+   - `dict`: agreed terms and meanings.
+   - `user-instructions`: directives/tone, constraints, and workflow preferences.
+   - `resume`: `goal`, completed `checkpoints` (avoid redoing work), `next_steps`, `open_questions`, `suggested_skills`.
+   - `qa`: QA pairs; unresolved as `**Q (open):**`.
+   - `condensed-transcript`: compressed chronological log; weight `w` (1-3; w=3 means user would repeat it verbatim).
+   - `environment`: harness/platform/cwd/repo/branch/HEAD/PR execution state.
+   - `artifacts`: touched files/commits/PRs (one line of state each, no content).
+   - `sources`, `insights`, `decisions`: reference files, realizations, settled decisions with reasoning.
+4. Save: `~/.relay/bin/relay upsert --stdin`
+5. CLI writes markdown to `~/.relay/convs/`, reconciles refs, and updates `~/.relay/index.jsonl`.
+6. Manual: report id/topic and invite rename. Auto-save: print only 'Auto-saved as <id> - rename anytime.'
 
 ## Required Rules
 
-- Treat `~/.relay/convs/*.md` as source of truth and `~/.relay/index.jsonl` as a derived cache.
-- `summary`, `dict`, and `qa` are mandatory. `resume`, `user_instructions`, and `condensed_transcript` may be empty but should never be fabricated.
-- Redact secrets and PII. Never write tokens, keys, passwords, or personal data into a record.
-- Reference artifacts by path, commit, PR, or URL instead of duplicating their contents.
-- Write for a cold agent recovering headspace. Exclude acknowledgments, tool noise, and chatter.
-- Do not edit settled decisions unless the user explicitly asks for a decision change.
+- `~/.relay/convs/*.md` is source of truth; `~/.relay/index.jsonl` is derived cache.
+- `summary`, `dict`, and `qa` are mandatory. `resume`, `user_instructions`, `condensed_transcript`, `environment`, and `artifacts` may be empty or omitted but should never be fabricated.
+- Redact secrets/PII. Reference artifacts by path, commit, PR, or URL (never duplicate contents).
+- Keep records concise; exclude chatter, acknowledgments, and tool noise.
+- Edit settled decisions only when explicitly requested.
 
 ## JSON Shape
 
 ```json
 {
-  "topic": "conversation database skill implementation",
-  "status": "active",
-  "tags": ["skill", "infra"],
-  "refs": [],
+  "topic": "db", "status": "active", "tags": ["infra"], "refs": [],
   "sections": {
-    "summary": "One line describing what this conversation is.",
-    "dict": "- **term** - agreed meaning.",
-    "qa": "- **Q:** question? **A:** answer.\n- **Q (open):** unresolved question?",
-    "sources": "- file: path/to/file",
-    "insights": "- Useful realization.",
-    "decisions": "1. Decision and reasoning."
+    "summary": "sum", "dict": "- **t** - m.", "qa": "- **Q:** q? **A:** a.\\n- **Q (open):** o?",
+    "sources": "", "insights": "", "decisions": ""
   },
   "resume": {
-    "goal": "Ship the redesigned engine and docs.",
-    "next_steps": ["update tests", "rewrite SKILL.md"],
-    "open_questions": ["how do adapters register hooks?"],
-    "suggested_skills": ["relay:save", "relay:resume"]
+    "goal": "g", "checkpoints": ["c"], "next_steps": ["s"], "open_questions": ["q"], "suggested_skills": []
   },
-  "user_instructions": ["use PowerShell on Windows"],
-  "condensed_transcript": [
-    {"u": "redesign relay", "a": "read the engine, planned the changes"}
-  ]
+  "user_instructions": [],
+  "environment": ["platform: OS", "cwd: path", "repo: path", "branch: main", "HEAD: commit", "PR: #1"],
+  "artifacts": ["file - state"],
+  "condensed_transcript": [{"u": "u", "a": "a", "w": 3}]
 }
 ```
 
 ## Lazy References
 
-Only after the common path needs branch or advanced behavior, read `~/.relay/references/save.md`. Examples: explicit branch ref labels, parking through `relay:park`, or schema detail not covered above.
+Only after save needs advanced behavior, read `~/.relay/references/save.md`.
 
 $ARGUMENTS

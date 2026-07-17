@@ -71,14 +71,20 @@ enum CommandError {
 
 fn run_semble(root: &Path, query: &str, limit: usize) -> Result<String, CommandError> {
     let args = semble_args(root, query, limit);
+    let timeout = env::var("RELAY_SEMBLE_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .map(Duration::from_secs_f64)
+        .unwrap_or(SEMBLE_TIMEOUT);
 
-    match run_command(OsStr::new("semble"), &args, SEMBLE_TIMEOUT) {
+    match run_command(OsStr::new("semble"), &args, timeout) {
         Ok(stdout) => Ok(stdout),
         Err(CommandError::NotFound) if use_uvx_semble() => {
             let mut uvx_args = Vec::with_capacity(args.len() + 1);
             uvx_args.push(OsString::from("semble"));
             uvx_args.extend(args);
-            run_command(OsStr::new("uvx"), &uvx_args, SEMBLE_TIMEOUT)
+            run_command(OsStr::new("uvx"), &uvx_args, timeout)
         }
         Err(error) => Err(error),
     }
@@ -357,11 +363,31 @@ fn read_stream_bounded<R: Read>(mut stream: R, limit: usize) -> io::Result<Vec<u
 }
 
 fn parse_semble_output(root: &Path, records: &[Value], stdout: &str, limit: usize) -> Vec<Value> {
+    let normalized_stdout = normalize_separators(stdout);
+    let mut basename_counts = std::collections::HashMap::<String, usize>::new();
+    for record in records {
+        if let Some(file) = record.get("file").and_then(Value::as_str) {
+            if let Some(name) = Path::new(&normalize_separators(file))
+                .file_name()
+                .and_then(|value| value.to_str())
+            {
+                *basename_counts.entry(name.to_string()).or_default() += 1;
+            }
+        }
+    }
     let mut hits: Vec<(usize, usize, Value)> = records
         .iter()
         .enumerate()
         .filter_map(|(record_index, record)| {
-            let position = record_match_position(root, record, stdout)?;
+            let file = record.get("file")?.as_str()?;
+            let normalized = normalize_separators(file);
+            let basename = Path::new(&normalized).file_name()?.to_str()?;
+            let position = record_match_position(
+                root,
+                record,
+                &normalized_stdout,
+                basename_counts.get(basename).copied() == Some(1),
+            )?;
             let score = 10_000usize.saturating_sub(position).max(1);
             let mut decorated = record.as_object()?.clone();
             decorated.insert("layer".into(), Value::String("semble".into()));
@@ -379,21 +405,29 @@ fn parse_semble_output(root: &Path, records: &[Value], stdout: &str, limit: usiz
         .collect()
 }
 
-fn record_match_position(root: &Path, record: &Value, stdout: &str) -> Option<usize> {
+fn record_match_position(
+    root: &Path,
+    record: &Value,
+    stdout: &str,
+    allow_basename: bool,
+) -> Option<usize> {
     let file = record.get("file")?.as_str()?;
     let absolute = absolute_record_path(root, file);
     let normalized_file = normalize_separators(file);
     let normalized_absolute = normalize_separators(&absolute);
-    [
+    let mut candidates = vec![
         file,
         normalized_file.as_str(),
-        Path::new(&normalized_file).file_name()?.to_str()?,
         absolute.as_str(),
         normalized_absolute.as_str(),
-    ]
-    .iter()
-    .filter_map(|candidate| character_position(stdout, candidate))
-    .min()
+    ];
+    if allow_basename {
+        candidates.push(Path::new(&normalized_file).file_name()?.to_str()?);
+    }
+    candidates
+        .iter()
+        .filter_map(|candidate| character_position(stdout, candidate))
+        .min()
 }
 
 fn character_position(stdout: &str, candidate: &str) -> Option<usize> {

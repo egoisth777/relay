@@ -22,20 +22,242 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
+
+
+def _process_resources(pid: int) -> tuple[int, int]:
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            class Counters(ctypes.Structure):
+                _fields_ = [
+                    ("cb", ctypes.c_ulong),
+                    ("faults", ctypes.c_ulong),
+                    ("peak", ctypes.c_size_t),
+                    ("working", ctypes.c_size_t),
+                    ("quota_peak_paged", ctypes.c_size_t),
+                    ("quota_paged", ctypes.c_size_t),
+                    ("quota_peak_nonpaged", ctypes.c_size_t),
+                    ("quota_nonpaged", ctypes.c_size_t),
+                    ("pagefile", ctypes.c_size_t),
+                    ("peak_pagefile", ctypes.c_size_t),
+                    ("private_usage", ctypes.c_size_t),
+                ]
+
+            handle = ctypes.windll.kernel32.OpenProcess(0x0410, False, pid)
+            if not handle:
+                return 0, 0
+            counters = Counters()
+            counters.cb = ctypes.sizeof(counters)
+            ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+            handles = ctypes.c_ulong()
+            ctypes.windll.kernel32.GetProcessHandleCount(handle, ctypes.byref(handles))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return int(counters.peak), int(handles.value)
+        except (AttributeError, OSError, TypeError):
+            return 0, 0
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+            import resource
+
+            rss = int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+            buffer = ctypes.create_string_buffer(8 * 4096)
+            size = libproc.proc_pidinfo(pid, 1, 0, buffer, len(buffer))
+            return rss, max(0, int(size) // 8)
+        except (OSError, AttributeError, TypeError, ValueError):
+            return 0, 0
+    try:
+        peak = 0
+        for line in Path(f"/proc/{pid}/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmHWM:"):
+                peak = int(line.split()[1]) * 1024
+                break
+        return peak, len(list(Path(f"/proc/{pid}/fd").iterdir()))
+    except (OSError, ValueError):
+        return 0, 0
+
+
+def run_scale_cmd(
+    cmd: list[str],
+    *,
+    input_text: str | None = None,
+    timeout: int = 120,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd or REPO),
+            stdin=subprocess.PIPE if input_text is not None else None,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        return {
+            "cmd": printable_cmd(cmd),
+            "returncode": None,
+            "timed_out": False,
+            "elapsed_ms": round(ms_since(start), 3),
+            "stdout_bytes": 0,
+            "stderr_bytes": len(str(exc)),
+            "stdout_head": "",
+            "stderr_head": str(exc)[:500],
+        }
+    output: dict[str, Any] = {}
+
+    def communicate() -> None:
+        stdout, stderr = proc.communicate(input=input_text)
+        output["stdout"] = stdout
+        output["stderr"] = stderr
+        output["finished_at"] = time.perf_counter()
+
+    thread = threading.Thread(target=communicate, daemon=True)
+    thread.start()
+    peak_rss = peak_handles = 0
+    deadline = time.perf_counter() + timeout
+    while thread.is_alive():
+        rss, handles = _process_resources(proc.pid)
+        peak_rss = max(peak_rss, rss)
+        peak_handles = max(peak_handles, handles)
+        if time.perf_counter() >= deadline:
+            proc.kill()
+            thread.join(timeout=5)
+            return {
+                "cmd": printable_cmd(cmd),
+                "returncode": None,
+                "timed_out": True,
+                "elapsed_ms": round((output.get("finished_at", time.perf_counter()) - start) * 1000, 3),
+                "stdout_bytes": len(output.get("stdout", "").encode("utf-8", "replace")),
+                "stderr_bytes": len(output.get("stderr", "").encode("utf-8", "replace")),
+                "stdout_head": output.get("stdout", "")[:500],
+                "stderr_head": output.get("stderr", "")[:500],
+                "query_hits_observed": _query_hits(output.get("stdout", "")),
+                "resource": {"peak_rss_bytes": peak_rss, "peak_open_handles": peak_handles},
+            }
+        time.sleep(0.01)
+    thread.join()
+    stdout = output.get("stdout", "")
+    stderr = output.get("stderr", "")
+    return {
+        "cmd": printable_cmd(cmd),
+        "timed_out": False,
+        "returncode": proc.returncode,
+        "elapsed_ms": round((output.get("finished_at", time.perf_counter()) - start) * 1000, 3),
+        "stdout_bytes": len(stdout.encode("utf-8", "replace")),
+        "stderr_bytes": len(stderr.encode("utf-8", "replace")),
+        "stdout_head": stdout[:500],
+        "stderr_head": stderr[:500],
+        "query_hits_observed": _query_hits(stdout),
+        "resource": {"peak_rss_bytes": peak_rss, "peak_open_handles": peak_handles},
+    }
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 
+
+def run_cmd(
+    cmd: list[str],
+    *,
+    input_text: str | None = None,
+    timeout: int = 120,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd or REPO),
+            env=env,
+            input=input_text,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+        return {
+            "cmd": printable_cmd(cmd),
+            "returncode": proc.returncode,
+            "timed_out": False,
+            "elapsed_ms": round(ms_since(start), 3),
+            "stdout_bytes": len(proc.stdout.encode("utf-8", "replace")),
+            "stderr_bytes": len(proc.stderr.encode("utf-8", "replace")),
+            "stdout_head": proc.stdout[:500],
+            "stderr_head": proc.stderr[:500],
+        }
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "replace")
+        return {
+            "cmd": printable_cmd(cmd),
+            "returncode": None,
+            "timed_out": True,
+            "elapsed_ms": round(ms_since(start), 3),
+            "stdout_bytes": len(stdout.encode("utf-8", "replace")),
+            "stderr_bytes": len(stderr.encode("utf-8", "replace")),
+            "stdout_head": stdout[:500],
+            "stderr_head": stderr[:500],
+        }
+
+
 REPO = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
 RUST_BINARY = REPO / "target" / "debug" / ("relay.exe" if os.name == "nt" else "relay")
+ACTIVE_BINARY = RUST_BINARY
 PROFILER_DIR = REPO / "tools" / "profiler"
 DEFAULT_BUDGET_FILE = PROFILER_DIR / "runtime_budgets.json"
+M1_BUDGET_FILE = PROFILER_DIR / "runtime_budgets.m1.json"
+V2_BUDGET_FILE = PROFILER_DIR / "runtime_budgets.v2.json"
 RESULTS_DIR = PROFILER_DIR / "results"
 DEFAULT_RECORDS = 100
 MIN_RUNTIME_COVERAGE_RECORDS = 100
-DEFAULT_SUBPROCESS_WARMUPS = 1
+DEFAULT_SUBPROCESS_WARMUPS = 2
+SCALE_RECORDS = 10_000
+SCALE_RUNS = 21
+PARALLEL_COLD_REBUILD_MAX_RATIO = 0.85
+SCALING_RECORD_COUNTS = (1_000, 10_000, 100_000)
+SCALE_BUDGETS = {
+    "cli_list": {"median_ms": 150.0, "max_ms": 200.0},
+    "cli_upsert": {"median_ms": 200.0, "max_ms": 250.0},
+    "cli_rebuild_index": {"median_ms": 150.0, "max_ms": 200.0},
+    "cli_rebuild_index_full": {"median_ms": 2000.0, "max_ms": 3000.0},
+    "cli_search": {"median_ms": 200.0, "max_ms": 250.0},
+    "cli_search_body_fallback": {"median_ms": 1500.0, "max_ms": 2200.0},
+    "cli_context": {"median_ms": 250.0, "max_ms": 325.0},
+    "cli_regen_refs": {"median_ms": 1200.0, "max_ms": 1800.0},
+}
+RESOURCE_GATES_100K = {
+    "peak_rss_bytes": 768 * 1024 * 1024,
+    "derived_bytes": 512 * 1024 * 1024,
+    "peak_open_handles": 64,
+    "scan_workers": 8,
+}
+REQUIRED_PROVENANCE_FIELDS = (
+    "commit", "binary_path", "binary_size", "binary_sha256", "cargo_lock_sha256",
+    "rustc_version", "cargo_version", "target_triple", "profile", "build_flags",
+    "logical_cpus", "ram_bytes", "os_image", "os_build", "storage_volume",
+    "storage_filesystem", "runner_image", "power_policy", "av_policy",
+    "fixture_manifest_sha256", "base_commit_report_sha256",
+)
+REQUIRED_SCALE_METRICS = (
+    "archive_bytes", "records", "record_opens", "record_writes", "cache_read_bytes",
+    "cache_write_bytes", "compat_write_bytes", "postings_read_bytes", "postings_write_bytes",
+    "derived_bytes", "peak_rss_bytes", "peak_open_handles", "scan_workers",
+    "configured_workers", "actual_workers", "query_hits", "cache_generation_before",
+    "cache_generation_after",
+)
 
 OPERATION_ORDER = (
     "skill_load_common_path",
@@ -44,9 +266,36 @@ OPERATION_ORDER = (
     "cli_list",
     "cli_upsert",
     "cli_rebuild_index",
+    "cli_rebuild_index_full",
     "cli_regen_refs",
+    "cli_search",
+    "cli_context",
     "codex_hook",
 )
+
+SCALE_OPERATIONS = tuple(SCALE_BUDGETS)
+
+@dataclass(frozen=True)
+class Config:
+    runs: int
+    records: int
+    command_timeout: int
+    profile: bool
+    profile_dir: Path
+    subprocess_warmups: int
+    scale_gates: bool = False
+
+STRUCTURAL_GATES = {
+    "cli_help": {"archive_enumerations": 0, "record_opens": 0, "record_writes": 0},
+    "cli_list": {"archive_enumerations": 1, "record_opens": 0, "record_writes": 0, "cache_publishes": 0},
+    "cli_upsert": {
+        "archive_enumerations": 1, "record_opens": 1, "record_writes": 1,
+        "journal_publishes": 1, "cache_publishes": 1, "compat_index_publishes": 1,
+    },
+    "cli_rebuild_index": {"archive_enumerations": 1, "record_opens": 0, "record_writes": 0, "cache_publishes": 0},
+    "cli_search": {"archive_enumerations": 1, "record_opens": 0, "record_writes": 0},
+    "cli_context": {"archive_enumerations": 1, "record_opens": 3, "record_writes": 0},
+}
 
 TIME_BUDGET_METRICS = ("median_ms", "max_ms")
 COMMON_PATH_BUDGET_METRICS = {
@@ -76,15 +325,27 @@ RUNTIME_COVERAGE_METRICS: dict[str, tuple[str, ...]] = {
         "record_files_after",
         "index_records_after",
     ),
+    "cli_rebuild_index_full": (
+        "records_requested", "record_files_before", "index_records_before",
+        "record_files_after", "index_records_after",
+    ),
     "cli_regen_refs": (
         "records_requested",
         "record_files_before",
         "record_files_after",
         "index_records_after",
     ),
+    "cli_search": (
+        "records_requested", "record_files_before", "index_records_before",
+        "record_files_after", "index_records_after",
+    ),
+    "cli_context": (
+        "records_requested", "record_files_before", "index_records_before",
+        "record_files_after", "index_records_after",
+    ),
 }
 UPSERT_MEASURED_RECORD_START = 10_000
-UPSERT_MEASURED_COVERAGE_METRICS = ("measured_record_files_after", "measured_index_records_after")
+UPSERT_MEASURED_COVERAGE_METRICS = ("measured_record_count_stable", "measured_topic_changed")
 
 BUILTIN_BUDGETS: dict[str, dict[str, float]] = {
     "skill_load_common_path": {
@@ -98,21 +359,15 @@ BUILTIN_BUDGETS: dict[str, dict[str, float]] = {
     "cli_help": {"median_ms": 100.0, "max_ms": 125.0},
     "cli_init": {"median_ms": 100.0, "max_ms": 125.0},
     "cli_list": {"median_ms": 100.0, "max_ms": 125.0},
-    "cli_upsert": {"median_ms": 140.0, "max_ms": 175.0},
-    "cli_rebuild_index": {"median_ms": 140.0, "max_ms": 175.0},
-    "cli_regen_refs": {"median_ms": 140.0, "max_ms": 175.0},
+    "cli_upsert": {"median_ms": 60.0, "max_ms": 80.0},
+    "cli_rebuild_index": {"median_ms": 60.0, "max_ms": 80.0},
+    "cli_rebuild_index_full": {"median_ms": 250.0, "max_ms": 350.0},
+    "cli_regen_refs": {"median_ms": 60.0, "max_ms": 80.0},
+    "cli_search": {"median_ms": 60.0, "max_ms": 80.0},
+    "cli_context": {"median_ms": 100.0, "max_ms": 125.0},
     "codex_hook": {"median_ms": 50.0, "max_ms": 75.0},
 }
 
-
-@dataclass(frozen=True)
-class Config:
-    runs: int
-    records: int
-    command_timeout: int
-    profile: bool
-    profile_dir: Path
-    subprocess_warmups: int
 
 
 def now_stamp() -> str:
@@ -201,53 +456,28 @@ def printable_cmd(cmd: list[str]) -> list[str]:
     return out
 
 
-def run_cmd(
-    cmd: list[str],
-    *,
-    input_text: str | None = None,
-    timeout: int = 120,
-    cwd: Path | None = None,
-    env: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    start = time.perf_counter()
+
+
+def tree_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    if not root.exists():
+        return digest.hexdigest()
+    files = sorted((item for item in root.rglob("*") if item.is_file()), key=lambda item: item.relative_to(root).as_posix())
+    for path in files:
+        relative = path.relative_to(root).as_posix()
+        if relative == ".semble/write.lock":
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def cache_generation(root: Path) -> int | None:
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(cwd or REPO),
-            env=env,
-            input=input_text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-        )
-        return {
-            "cmd": printable_cmd(cmd),
-            "returncode": proc.returncode,
-            "timed_out": False,
-            "elapsed_ms": round(ms_since(start), 3),
-            "stdout_bytes": len(proc.stdout.encode("utf-8", "replace")),
-            "stderr_bytes": len(proc.stderr.encode("utf-8", "replace")),
-            "stdout_head": proc.stdout[:500],
-            "stderr_head": proc.stderr[:500],
-        }
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode("utf-8", "replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode("utf-8", "replace")
-        return {
-            "cmd": printable_cmd(cmd),
-            "returncode": None,
-            "timed_out": True,
-            "elapsed_ms": round(ms_since(start), 3),
-            "stdout_bytes": len(stdout.encode("utf-8", "replace")),
-            "stderr_bytes": len(stderr.encode("utf-8", "replace")),
-            "stdout_head": stdout[:500],
-            "stderr_head": stderr[:500],
-        }
+        manifest = json.loads((root / ".semble" / "index-v2" / "manifest.json").read_text(encoding="utf-8"))
+        return int(manifest["generation"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def time_repeated_command(
@@ -286,6 +516,17 @@ def time_repeated_command(
         )
         command_runs.append(result)
         samples.append(float(result["elapsed_ms"]))
+    attempts = []
+    for phase, phase_runs in (("warmup", warmup_runs), ("measured", command_runs)):
+        for ordinal, run in enumerate(phase_runs):
+            attempts.append({
+                **run,
+                "phase": phase,
+                "ordinal": ordinal,
+                "clone_id": f"{label}-{phase}-{ordinal}",
+                "pre_state_sha256": tree_sha256(root) if root else hashlib.sha256(label.encode()).hexdigest(),
+                "pre_generation": cache_generation(root) if root else None,
+            })
     return {
         "label": label,
         "kind": "subprocess",
@@ -296,6 +537,70 @@ def time_repeated_command(
         "returncodes": sorted({run["returncode"] for run in command_runs}, key=lambda value: str(value)),
         "timed_out": any(run["timed_out"] for run in command_runs),
         "command_runs": command_runs,
+        "attempts": attempts,
+    }
+
+
+def time_cloned_command(
+    label: str,
+    config: Config,
+    source: Path,
+    make_cmd: Callable[[Path, int], list[str]],
+    *,
+    make_input: Callable[[int], str | None] | None = None,
+    env_factory: Callable[[Path, str, int], dict[str, str] | None] | None = None,
+    runner: Callable[..., dict[str, Any]] = run_cmd,
+) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    warmup_runs: list[dict[str, Any]] = []
+    command_runs: list[dict[str, Any]] = []
+    samples: list[float] = []
+    last_root = source
+    attempt_base = source.parent / f"{safe_name(label)}-attempts"
+    for phase, count in (("warmup", config.subprocess_warmups), ("measured", config.runs)):
+        for ordinal in range(count):
+            clone_id = f"{label}-{phase}-{ordinal}"
+            clone = attempt_base / clone_id
+            shutil.copytree(source, clone)
+            env = env_factory(clone, phase, ordinal) if env_factory else None
+            result = runner(
+                make_cmd(clone, ordinal),
+                input_text=make_input(ordinal) if make_input else None,
+                timeout=config.command_timeout,
+                env=env,
+            )
+            attempt = {
+                **result,
+                "phase": phase,
+                "ordinal": ordinal,
+                "clone_id": clone_id,
+                "pre_state_sha256": tree_sha256(source),
+                "pre_generation": cache_generation(source),
+                "post_state_sha256": tree_sha256(clone),
+                "post_generation": cache_generation(clone),
+                "clone_path": str(clone),
+                **({"trace_path": env["RELAY_TEST_TRACE_IO"]} if env and env.get("RELAY_TEST_TRACE_IO") else {}),
+            }
+            attempts.append(attempt)
+            if phase == "warmup":
+                warmup_runs.append(result)
+            else:
+                command_runs.append(result)
+                if result["returncode"] == 0 and not result["timed_out"]:
+                    samples.append(float(result["elapsed_ms"]))
+                last_root = clone
+    return {
+        "label": label,
+        "kind": "subprocess",
+        "root": str(source),
+        "summary": summarize(samples),
+        "samples_ms": [round(sample, 3) for sample in samples],
+        "warmup_runs": warmup_runs,
+        "returncodes": sorted({run["returncode"] for run in command_runs}, key=lambda value: str(value)),
+        "timed_out": any(run["timed_out"] for run in command_runs),
+        "command_runs": command_runs,
+        "attempts": attempts,
+        "_last_root": last_root,
     }
 
 
@@ -318,6 +623,8 @@ def time_repeated_callable(label: str, runs: int, func: Callable[[], dict[str, A
 
 def rust_binary_path() -> Path:
     """Return the checkout's debug Rust binary path, including cross-platform fallback."""
+    if ACTIVE_BINARY.is_file():
+        return ACTIVE_BINARY
     candidates = (
         RUST_BINARY,
         REPO / "target" / "debug" / ("relay" if RUST_BINARY.name.endswith(".exe") else "relay.exe"),
@@ -341,16 +648,16 @@ def ensure_rust_binary(timeout: int) -> Path:
 
 
 def relay_cmd(*args: object) -> list[str]:
-    return [str(rust_binary_path()), *map(str, args)]
+    return [str(ACTIVE_BINARY), *map(str, args)]
 
 def profiler_record_id(i: int) -> str:
     return f"conv_profiler_{i:04d}"
 
 
-def conversation_payload(i: int, *, ref_previous: bool = False) -> str:
+def conversation_payload(i: int, *, ref_previous: bool = False, topic: str | None = None) -> str:
     data: dict[str, Any] = {
         "id": profiler_record_id(i),
-        "topic": f"profiler conversation {i:04d}",
+        "topic": topic or f"profiler conversation {i:04d}",
         "status": "active",
         "tags": ["profiler", "synthetic"],
         "sections": {
@@ -392,7 +699,7 @@ def upsert_record(root: Path, i: int, timeout: int, *, ref_previous: bool = Fals
 
 
 def record_file_count(root: Path) -> int:
-    return len(list((root / "convs").glob("*.md")))
+    return len(list((root / "convs").rglob("*.md")))
 
 
 def index_record_count(root: Path) -> int:
@@ -422,6 +729,17 @@ def measured_profiler_index_record_count(root: Path, *, start: int, count: int) 
         if isinstance(record, dict) and record.get("id") in expected:
             seen.add(str(record["id"]))
     return len(seen)
+
+
+def indexed_topic(root: Path, record_id: str) -> str | None:
+    try:
+        for line in (root / "index.jsonl").read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            if row.get("id") == record_id:
+                return str(row.get("topic"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
 
 
 def coverage_snapshot(root: Path, config: Config) -> dict[str, int]:
@@ -627,76 +945,113 @@ def op_cli_init(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, 
 
 
 def op_cli_list(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    root = operation_dataset_root(base, config, cache, "cli-list")
-    before = coverage_snapshot(root, config)
-    result = time_repeated_command(
-        "cli_list",
-        config.runs,
-        lambda _i: relay_cmd("list", "--json", "--limit", "10", "--relay-root", root),
-        warmups=config.subprocess_warmups,
-        timeout=config.command_timeout,
-        root=root,
+    source = operation_dataset_root(base, config, cache, "cli-list")
+    before = coverage_snapshot(source, config)
+    result = time_cloned_command(
+        "cli_list", config, source,
+        lambda root, _i: relay_cmd("list", "--json", "--limit", "10", "--relay-root", root),
     )
-    return attach_runtime_coverage(result, root=root, config=config, before=before)
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
 
 
 def op_cli_upsert(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    root = operation_dataset_root(base, config, cache, "cli-upsert")
-    before = coverage_snapshot(root, config)
-    result = time_repeated_command(
-        "cli_upsert",
-        config.runs,
-        lambda _i: relay_cmd("upsert", "--stdin", "--relay-root", root),
-        make_input=lambda i: conversation_payload(UPSERT_MEASURED_RECORD_START + i),
-        warmups=config.subprocess_warmups,
-        timeout=config.command_timeout,
-        root=root,
+    source = operation_dataset_root(base, config, cache, "cli-upsert")
+    before = coverage_snapshot(source, config)
+    measured_id = profiler_record_id(0)
+    topic_before = indexed_topic(source, measured_id)
+    result = time_cloned_command(
+        "cli_upsert", config, source,
+        lambda root, _i: relay_cmd("upsert", "--stdin", "--relay-root", root),
+        make_input=lambda _i: conversation_payload(0, topic="profile update v2"),
     )
-    result = attach_runtime_coverage(result, root=root, config=config, before=before)
+    last = result.pop("_last_root")
+    result = attach_runtime_coverage(result, root=last, config=config, before=before)
     result["coverage"].update(
         {
-            "measured_records_expected": config.runs,
+            "measured_record_id": measured_id,
+            "measured_record_files_before": measured_profiler_record_file_count(source, start=0, count=1),
+            "measured_index_records_before": measured_profiler_index_record_count(source, start=0, count=1),
             "measured_record_files_after": measured_profiler_record_file_count(
-                root,
-                start=UPSERT_MEASURED_RECORD_START,
-                count=config.runs,
+                last, start=0, count=1,
             ),
             "measured_index_records_after": measured_profiler_index_record_count(
-                root,
-                start=UPSERT_MEASURED_RECORD_START,
-                count=config.runs,
+                last, start=0, count=1,
             ),
+            "measured_topic_before": topic_before,
+            "measured_topic_after": indexed_topic(last, measured_id),
         }
     )
     return result
 
 
 def op_cli_rebuild_index(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    root = operation_dataset_root(base, config, cache, "cli-rebuild-index")
-    before = coverage_snapshot(root, config)
-    result = time_repeated_command(
-        "cli_rebuild_index",
-        config.runs,
-        lambda _i: relay_cmd("rebuild-index", "--relay-root", root),
-        warmups=config.subprocess_warmups,
-        timeout=config.command_timeout,
-        root=root,
+    source = operation_dataset_root(base, config, cache, "cli-rebuild-index")
+    before = coverage_snapshot(source, config)
+    result = time_cloned_command(
+        "cli_rebuild_index", config, source,
+        lambda root, _i: relay_cmd("rebuild-index", "--relay-root", root),
     )
-    return attach_runtime_coverage(result, root=root, config=config, before=before)
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
+
+
+def op_cli_rebuild_index_full(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
+    source = operation_dataset_root(base, config, cache, "cli-rebuild-index-full")
+    before = coverage_snapshot(source, config)
+    result = time_cloned_command(
+        "cli_rebuild_index_full", config, source,
+        lambda root, _i: relay_cmd("rebuild-index", "--full", "--relay-root", root),
+    )
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
 
 
 def op_cli_regen_refs(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    root = operation_dataset_root(base, config, cache, "cli-regen-refs")
-    before = coverage_snapshot(root, config)
-    result = time_repeated_command(
-        "cli_regen_refs",
-        config.runs,
-        lambda _i: relay_cmd("regen-refs", "--relay-root", root),
-        warmups=config.subprocess_warmups,
-        timeout=config.command_timeout,
-        root=root,
+    source = operation_dataset_root(base, config, cache, "cli-regen-refs")
+    before = coverage_snapshot(source, config)
+    result = time_cloned_command(
+        "cli_regen_refs", config, source,
+        lambda root, _i: relay_cmd("regen-refs", "--relay-root", root),
     )
-    return attach_runtime_coverage(result, root=root, config=config, before=before)
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
+
+
+def op_cli_search(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
+    source = operation_dataset_root(base, config, cache, "cli-search")
+    before = coverage_snapshot(source, config)
+    result = time_cloned_command(
+        "cli_search", config, source,
+        lambda root, _i: relay_cmd("search", "profiler conversation 0001", "--relay-root", root),
+    )
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
+
+
+def op_cli_search_body_fallback(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
+    source = operation_dataset_root(base, config, cache, "cli-search-body-fallback")
+    before = coverage_snapshot(source, config)
+    result = time_cloned_command(
+        "cli_search_body_fallback", config, source,
+        lambda root, _i: relay_cmd(
+            "search", "profiler conversation 0001", "--no-semble", "--relay-root", root
+        ),
+    )
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
+
+
+def op_cli_context(config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
+    source = operation_dataset_root(base, config, cache, "cli-context")
+    before = coverage_snapshot(source, config)
+    target = profiler_record_id(1 if config.records > 2 else 0)
+    result = time_cloned_command(
+        "cli_context", config, source,
+        lambda root, _i: relay_cmd("context", target, "--json", "--relay-root", root),
+    )
+    last = result.pop("_last_root")
+    return attach_runtime_coverage(result, root=last, config=config, before=before)
 
 
 def hook_payload(base: Path) -> str:
@@ -754,9 +1109,270 @@ OPERATIONS: dict[str, Operation] = {
     "cli_list": op_cli_list,
     "cli_upsert": op_cli_upsert,
     "cli_rebuild_index": op_cli_rebuild_index,
+    "cli_rebuild_index_full": op_cli_rebuild_index_full,
     "cli_regen_refs": op_cli_regen_refs,
+    "cli_search": op_cli_search,
+    "cli_search_body_fallback": op_cli_search_body_fallback,
+    "cli_context": op_cli_context,
     "codex_hook": op_codex_hook,
 }
+
+def _read_trace(path: str | Path | None) -> list[dict[str, Any]]:
+    if not path or not Path(path).is_file():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                events.append(value)
+    return events
+
+
+def _scale_env(clone: Path, label: str, phase: str, ordinal: int, *, threads: int | None = None) -> dict[str, str]:
+    env = dict(os.environ)
+    trace = clone.parent / f"{safe_name(label)}-{phase}-{ordinal}.jsonl"
+    env.update({"RELAY_TEST_MODE": "1", "RELAY_TEST_TRACE_IO": str(trace)})
+    if threads is not None:
+        env["RELAY_SCAN_THREADS"] = str(threads)
+    return env
+
+
+def _query_hits(stdout_head: str) -> int | None:
+    try:
+        value: Any = json.loads(stdout_head)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(value, dict):
+        for key in ("hits", "results", "records"):
+            candidate = value.get(key)
+            if isinstance(candidate, list):
+                return len(candidate)
+    if isinstance(value, list):
+        return len(value)
+    return None
+
+
+def scale_telemetry(result: dict[str, Any], source: Path) -> dict[str, Any]:
+    """Extract scale evidence from traced attempts and observed child resources."""
+    attempts = [attempt for attempt in result.get("attempts", []) if attempt.get("phase") == "measured"]
+    events = [event for attempt in attempts for event in _read_trace(attempt.get("trace_path"))]
+    record_files = [path for path in source.joinpath("convs").rglob("*.md") if path.is_file()]
+    archive_bytes = sum(path.stat().st_size for path in record_files)
+    cache_reads = [event for event in events if event.get("event") == "cache_read"]
+    cache_writes = [event for event in events if event.get("event") == "cache_write"]
+    compat_events = [event for event in events if event.get("event") == "compat_index_publish"]
+    derived_values: list[int] = []
+    compat_values: list[int] = []
+    for attempt in attempts:
+        clone = Path(attempt.get("clone_path", ""))
+        if not clone.is_dir():
+            trace_path = attempt.get("trace_path")
+            candidate = (
+                source.parent / f"{safe_name(result.get('label', 'scale'))}-attempts" / attempt["clone_id"]
+                if trace_path
+                else Path()
+            )
+            clone = candidate if candidate.is_dir() else Path()
+        if clone.is_dir():
+            derived_values.append(
+                sum(path.stat().st_size for path in clone.rglob("*") if path.is_file() and ".semble" in path.parts)
+            )
+            if (clone / "index.jsonl").is_file():
+                compat_values.append((clone / "index.jsonl").stat().st_size)
+    resource = [attempt.get("resource", {}) for attempt in attempts]
+    rss = [value.get("peak_rss_bytes") for value in resource if value.get("peak_rss_bytes")]
+    handles = [value.get("peak_open_handles") for value in resource if value.get("peak_open_handles")]
+    configured = [event.get("workers") for event in events if event.get("event") == "scan_start"]
+    actual = [event.get("workers_started") for event in events if event.get("event") == "scan_end"]
+    hit_values = [
+        attempt.get("query_hits_observed")
+        if attempt.get("query_hits_observed") is not None
+        else _query_hits(attempt.get("stdout_head", ""))
+        for attempt in attempts
+    ]
+    hits = next((value for value in hit_values if value is not None), None)
+    before = [attempt.get("pre_generation") for attempt in attempts if attempt.get("pre_generation") is not None]
+    after = [attempt.get("post_generation") for attempt in attempts if attempt.get("post_generation") is not None]
+    return {
+        "archive_bytes": archive_bytes or None,
+        "records": len(record_files) or None,
+        "record_opens": sum(1 for event in events if event.get("event") == "record_open"),
+        "record_writes": sum(1 for event in events if event.get("event") == "record_write"),
+        "cache_read_bytes": sum(int(event.get("bytes", 0)) for event in cache_reads if isinstance(event.get("bytes"), int)),
+        "cache_write_bytes": sum(int(event.get("bytes", 0)) for event in cache_writes if isinstance(event.get("bytes"), int)),
+        "compat_write_bytes": sum(compat_values) if compat_events and compat_values else None,
+        "postings_read_bytes": sum(
+            int(event.get("bytes", 0))
+            for event in cache_reads
+            if str(event.get("artifact", "")).startswith("postings") and isinstance(event.get("bytes"), int)
+        ),
+        "postings_write_bytes": sum(
+            int(event.get("bytes", 0))
+            for event in cache_writes
+            if str(event.get("artifact", "")).startswith("postings") and isinstance(event.get("bytes"), int)
+        ),
+        "derived_bytes": max(derived_values) if derived_values else None,
+        "peak_rss_bytes": max(rss) if rss else None,
+        "peak_open_handles": max(handles) if handles else None,
+        "scan_workers": max(actual) if actual else None,
+        "configured_workers": max(configured) if configured else None,
+        "actual_workers": max(actual) if actual else None,
+        "query_hits": hits,
+        "cache_generation_before": min(before) if before else None,
+        "cache_generation_after": max(after) if after else None,
+    }
+
+
+def scale_operation(
+    name: str,
+    config: Config,
+    base: Path,
+    cache: dict[str, Any],
+    make_cmd: Callable[[Path, int], list[str]],
+    *,
+    make_input: Callable[[int], str | None] | None = None,
+) -> dict[str, Any]:
+    source = operation_dataset_root(base, config, cache, f"scale-{name}")
+    result = time_cloned_command(
+        name,
+        config,
+        source,
+        make_cmd,
+        make_input=make_input,
+        env_factory=lambda clone, phase, ordinal: _scale_env(clone, name, phase, ordinal),
+        runner=run_scale_cmd,
+    )
+    result.pop("_last_root", None)
+    result["telemetry"] = scale_telemetry(result, source)
+    return result
+
+
+def time_paired_cold_rebuild(config: Config, source: Path) -> dict[str, Any]:
+    arms = {
+        "serial": {"samples_ms": [], "command_runs": [], "warmup_runs": [], "attempts": []},
+        "parallel": {"samples_ms": [], "command_runs": [], "warmup_runs": [], "attempts": []},
+    }
+    pairs: list[dict[str, Any]] = []
+    orders: list[list[str]] = []
+    attempt_base = source.parent / "cli-rebuild-index-full-paired-attempts"
+    for phase, count in (("warmup", config.subprocess_warmups), ("measured", config.runs)):
+        for ordinal in range(count):
+            order = ["serial", "parallel"] if ordinal % 2 == 0 else ["parallel", "serial"]
+            orders.append(order)
+            pair: dict[str, Any] = {"phase": phase, "ordinal": ordinal, "order": order, "arms": {}}
+            pre_hash = tree_sha256(source)
+            for arm in order:
+                clone_id = f"{arm}-{phase}-{ordinal}"
+                clone = attempt_base / clone_id
+                shutil.copytree(source, clone)
+                threads = 1 if arm == "serial" else 8
+                env = _scale_env(clone, f"cli-rebuild-index-full-{arm}", phase, ordinal, threads=threads)
+                run = run_scale_cmd(
+                    relay_cmd("rebuild-index", "--full", "--relay-root", clone),
+                    timeout=config.command_timeout,
+                    env=env,
+                )
+                attempt = {
+                    **run,
+                    "phase": phase,
+                    "ordinal": ordinal,
+                    "arm": arm,
+                    "clone_id": clone_id,
+                    "pre_state_sha256": pre_hash,
+                    "pre_generation": cache_generation(source),
+                    "post_state_sha256": tree_sha256(clone),
+                    "post_generation": cache_generation(clone),
+                    "configured_threads": threads,
+                    "trace_path": env["RELAY_TEST_TRACE_IO"],
+                    "clone_path": str(clone),
+                }
+                arms[arm]["attempts"].append(attempt)
+                pair["arms"][arm] = attempt
+                if phase == "warmup":
+                    arms[arm]["warmup_runs"].append(run)
+                else:
+                    arms[arm]["command_runs"].append(run)
+                    if run["returncode"] == 0 and not run["timed_out"]:
+                        arms[arm]["samples_ms"].append(float(run["elapsed_ms"]))
+            pair["byte_identical"] = (
+                pair["arms"].get("serial", {}).get("post_state_sha256")
+                == pair["arms"].get("parallel", {}).get("post_state_sha256")
+            )
+            pairs.append(pair)
+    for arm in arms.values():
+        arm["summary"] = summarize(arm["samples_ms"])
+        arm["samples_ms"] = [round(value, 3) for value in arm["samples_ms"]]
+        arm["returncodes"] = sorted({run["returncode"] for run in arm["command_runs"]}, key=lambda value: str(value))
+        arm["timed_out"] = any(run["timed_out"] for run in arm["command_runs"])
+    return {
+        "label": "cli_rebuild_index_full",
+        "kind": "paired_subprocess",
+        "root": str(source),
+        "arms": arms,
+        "pairs": pairs,
+        "orders": orders,
+        "attempts": [attempt for arm in arms.values() for attempt in arm["attempts"]],
+        "telemetry": scale_telemetry({"attempts": arms["parallel"]["attempts"], "root": str(source), "label": "cli-rebuild-index-full"}, source),
+    }
+
+
+
+def structural_run(name: str, config: Config, base: Path, cache: dict[str, Any]) -> dict[str, Any]:
+    trace = base / f"structural-{safe_name(name)}.jsonl"
+    env = dict(os.environ)
+    env.update({"RELAY_TEST_MODE": "1", "RELAY_TEST_TRACE_IO": str(trace)})
+    clone_id = f"structural-{name}"
+    source: Path | None = None
+    root: Path | None = None
+    input_text = None
+    if name == "cli_help":
+        command = relay_cmd("--help")
+    else:
+        source = operation_dataset_root(base, config, cache, name.replace("_", "-"))
+        root = base / "structural-clones" / safe_name(name)
+        root.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, root)
+        if name == "cli_list":
+            command = relay_cmd("list", "--json", "--relay-root", root)
+        elif name == "cli_upsert":
+            command = relay_cmd("upsert", "--stdin", "--relay-root", root)
+            input_text = conversation_payload(0, topic="profile structural update")
+        elif name == "cli_rebuild_index":
+            command = relay_cmd("rebuild-index", "--relay-root", root)
+        elif name == "cli_search":
+            command = relay_cmd("search", "profiler conversation 0001", "--no-semble", "--relay-root", root)
+        elif name == "cli_context":
+            command = relay_cmd("context", profiler_record_id(1), "--json", "--relay-root", root)
+        else:
+            raise ValueError(f"no structural command for {name}")
+    executed = run_cmd(command, input_text=input_text, timeout=config.command_timeout, env=env)
+    events = []
+    if trace.is_file():
+        for line in trace.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                events.append(json.loads(line))
+    names = [str(event.get("event")) for event in events]
+    io = {
+        "archive_enumerations": names.count("snapshot"),
+        "record_opens": names.count("record_open"),
+        "record_writes": names.count("record_write"),
+        "journal_publishes": names.count("journal_publish"),
+        "cache_publishes": names.count("cache_publish"),
+        "compat_index_publishes": names.count("compat_index_publish"),
+    }
+    return {
+        "excluded_from_timing": True,
+        "clone_id": clone_id,
+        "pre_state_sha256": tree_sha256(source) if source else hashlib.sha256(name.encode()).hexdigest(),
+        "pre_generation": cache_generation(source) if source else None,
+        "returncode": executed["returncode"],
+        "timed_out": executed["timed_out"],
+        "io": io,
+    }
 
 
 def top_profile_functions(profile_path: Path, limit: int = 12) -> list[dict[str, Any]]:
@@ -999,34 +1615,35 @@ def evaluate_gate(
                             }
                         )
                 if name == "cli_upsert":
-                    try:
-                        expected = int(summary.get("runs", 0))
-                    except (TypeError, ValueError):
-                        expected = 0
-                    if expected < 1:
-                        failures.append(
-                            {
-                                "operation": name,
-                                "metric": "upsert_measured_records",
-                                "reason": "missing measured run count",
-                            }
-                        )
-                    else:
-                        for metric in UPSERT_MEASURED_COVERAGE_METRICS:
-                            try:
-                                actual = int(coverage.get(metric, -1))
-                            except (TypeError, ValueError):
-                                actual = -1
-                            if actual < expected:
-                                failures.append(
-                                    {
-                                        "operation": name,
-                                        "metric": "upsert_measured_records",
-                                        "coverage_metric": metric,
-                                        "actual": actual,
-                                        "expected_records": expected,
-                                    }
-                                )
+                    stable = (
+                        coverage.get("measured_record_files_before") == coverage.get("measured_record_files_after")
+                        and coverage.get("measured_index_records_before") == coverage.get("measured_index_records_after")
+                        and coverage.get("measured_record_files_before") == 1
+                        and coverage.get("measured_index_records_before") == 1
+                    )
+                    if not stable:
+                        failures.append({
+                            "operation": name,
+                            "metric": "upsert_measured_update",
+                            "coverage_metric": "measured_record_count_stable",
+                        })
+                    if coverage.get("measured_topic_before") == coverage.get("measured_topic_after"):
+                        failures.append({
+                            "operation": name,
+                            "metric": "upsert_measured_update",
+                            "coverage_metric": "measured_topic_changed",
+                        })
+        if name in STRUCTURAL_GATES and "structural_run" in result:
+            actual_io = result.get("structural_run", {}).get("io", {})
+            for metric, allowed in STRUCTURAL_GATES[name].items():
+                if actual_io.get(metric) != allowed:
+                    failures.append({
+                        "operation": name,
+                        "metric": "structural_io",
+                        "io_metric": metric,
+                        "actual": actual_io.get(metric),
+                        "expected": allowed,
+                    })
         command_runs = result.get("command_runs") or []
         bad_runs = [
             {
@@ -1040,6 +1657,152 @@ def evaluate_gate(
         ]
         if bad_runs:
             failures.append({"operation": name, "metric": "subprocess", "runs": bad_runs})
+    for name in RUNTIME_COVERAGE_METRICS:
+        if operations and name in budgets and name not in operations:
+            failures.append({
+                "operation": name,
+                "metric": "record_coverage",
+                "reason": "missing coverage metadata",
+                "min_records": MIN_RUNTIME_COVERAGE_RECORDS,
+            })
+    return {"passed": not failures, "failures": failures}
+
+
+def evaluate_scale_gate(
+    operations: dict[str, dict[str, Any]],
+    telemetry: dict[str, Any],
+    *,
+    records: int = SCALE_RECORDS,
+    budgets: dict[str, dict[str, float]] | None = None,
+    selected: list[str] | None = None,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    expected = set(SCALE_OPERATIONS)
+    actual = set(selected if selected is not None else operations)
+    if actual != expected:
+        failures.append({
+            "operation": "selection",
+            "metric": "scale_operations",
+            "reason": "scale evidence must execute the complete SCALE_BUDGETS set",
+            "missing": sorted(expected - actual),
+            "unexpected": sorted(actual - expected),
+        })
+    active_budgets = budgets or SCALE_BUDGETS
+
+    def check_summary(name: str, summary: Any, budget: Any) -> None:
+        if not isinstance(summary, dict) or not summary:
+            failures.append({"operation": name, "metric": "summary", "reason": "missing samples"})
+            return
+        for metric in TIME_BUDGET_METRICS:
+            try:
+                actual_value = float(summary[metric])
+                allowed = float(budget[metric])
+            except (KeyError, TypeError, ValueError):
+                failures.append({"operation": name, "metric": metric, "reason": "missing or non-numeric metric"})
+                continue
+            if not math.isfinite(actual_value) or not math.isfinite(allowed):
+                failures.append({"operation": name, "metric": metric, "reason": "non-finite metric"})
+            elif actual_value > allowed:
+                failures.append({
+                    "operation": name,
+                    "metric": metric,
+                    "actual_ms": round(actual_value, 3),
+                    "budget_ms": round(allowed, 3),
+                })
+
+    for name in SCALE_OPERATIONS:
+        result = operations.get(name)
+        if not isinstance(result, dict):
+            failures.append({"operation": name, "metric": "operation", "reason": "missing operation result"})
+            continue
+        budget = active_budgets.get(name)
+        if not isinstance(budget, dict):
+            failures.append({"operation": name, "metric": "budget", "reason": "missing budget"})
+            continue
+        if name == "cli_rebuild_index_full":
+            arms = result.get("arms")
+            if not isinstance(arms, dict):
+                failures.append({"operation": name, "metric": "paired_arms", "reason": "missing paired arms"})
+            else:
+                for arm in ("serial", "parallel"):
+                    arm_result = arms.get(arm, {})
+                    check_summary(f"{name}:{arm}", arm_result.get("summary"), budget)
+                    bad = [
+                        attempt for attempt in arm_result.get("attempts", [])
+                        if attempt.get("returncode") != 0 or attempt.get("timed_out")
+                    ]
+                    if bad:
+                        failures.append({"operation": name, "metric": f"{arm}_subprocess", "runs": bad})
+            for pair in result.get("pairs", []):
+                if pair.get("phase") == "measured" and not pair.get("byte_identical"):
+                    failures.append({"operation": name, "metric": "byte_identical", "reason": "paired outputs differ"})
+            serial = (arms or {}).get("serial", {}).get("summary", {})
+            parallel = (arms or {}).get("parallel", {}).get("summary", {})
+            try:
+                serial_median = float(serial["median_ms"])
+                parallel_median = float(parallel["median_ms"])
+                ratio = parallel_median / serial_median
+                if not math.isfinite(ratio):
+                    raise ValueError
+                if ratio > PARALLEL_COLD_REBUILD_MAX_RATIO:
+                    failures.append({
+                        "operation": name,
+                        "metric": "parallel_ratio",
+                        "actual_ratio": round(ratio, 4),
+                        "max_ratio": PARALLEL_COLD_REBUILD_MAX_RATIO,
+                    })
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                failures.append({"operation": name, "metric": "parallel_ratio", "reason": "missing paired medians"})
+        else:
+            check_summary(name, result.get("summary"), budget)
+            bad = [
+                run for run in [*(result.get("warmup_runs") or []), *(result.get("command_runs") or [])]
+                if run.get("returncode") != 0 or run.get("timed_out")
+            ]
+            if bad:
+                failures.append({"operation": name, "metric": "subprocess", "runs": bad})
+
+    for metric in REQUIRED_SCALE_METRICS:
+        value = telemetry.get(metric)
+        if value is None or isinstance(value, bool):
+            failures.append({"operation": "scale", "metric": metric, "reason": "missing telemetry"})
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            failures.append({"operation": "scale", "metric": metric, "reason": "non-numeric telemetry"})
+            continue
+        if not math.isfinite(numeric):
+            failures.append({"operation": "scale", "metric": metric, "reason": "non-finite telemetry"})
+    try:
+        measured_records = int(telemetry.get("records"))
+    except (TypeError, ValueError):
+        measured_records = -1
+    if measured_records != records:
+        failures.append({
+            "operation": "scale",
+            "metric": "records",
+            "actual": measured_records,
+            "expected": records,
+            "reason": "scale corpus record count mismatch",
+        })
+
+    if records == 100_000:
+        for metric, allowed in RESOURCE_GATES_100K.items():
+            value = telemetry.get(metric)
+            try:
+                actual_value = float(value)
+                allowed_value = float(allowed)
+            except (TypeError, ValueError):
+                failures.append({"operation": "scale_100k", "metric": metric, "reason": "missing resource telemetry"})
+                continue
+            if actual_value > allowed_value:
+                failures.append({
+                    "operation": "scale_100k",
+                    "metric": metric,
+                    "actual": actual_value,
+                    "budget": allowed_value,
+                })
     return {"passed": not failures, "failures": failures}
 
 
@@ -1074,12 +1837,92 @@ def write_report(report: dict[str, Any], out: Path | None, *, stdout_json: bool)
     return str(out)
 
 
+def command_text(command: list[str]) -> str:
+    try:
+        return subprocess.run(command, cwd=str(REPO), capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def dataset_report(root: Path, records: int) -> dict[str, Any]:
+    files = sorted((root / "convs").rglob("*.md")) if root.exists() else []
+    archive_bytes = sum(path.stat().st_size for path in files)
+    return {
+        "manifest_version": 1,
+        "seed": 20260716,
+        "archive_sha256": tree_sha256(root),
+        "records": records,
+        "files": len(files),
+        "bytes": archive_bytes,
+        "size_histogram": {},
+        "tag_histogram": {},
+        "ref_degree_histogram": {},
+        "nested_records": sum(1 for path in files if len(path.relative_to(root / "convs").parts) > 1),
+        "queries": {"metadata": "profiler conversation 0001", "body": "synthetic profiler summary"},
+    }
+
+
+def provenance_report(binary: Path, dataset: dict[str, Any]) -> dict[str, Any]:
+    binary_bytes = binary.read_bytes() if binary.is_file() else b""
+    cargo_lock = (REPO / "Cargo.lock").read_bytes()
+    rustc = command_text(["rustc", "-vV"])
+    cargo = command_text(["cargo", "-V"])
+    host = next((line.removeprefix("host: ") for line in rustc.splitlines() if line.startswith("host: ")), "")
+    commit = command_text(["git", "rev-parse", "HEAD"])
+    values = {
+        "commit": commit,
+        "binary_path": str(binary.resolve()),
+        "binary_size": len(binary_bytes),
+        "binary_sha256": hashlib.sha256(binary_bytes).hexdigest(),
+        "cargo_lock_sha256": hashlib.sha256(cargo_lock).hexdigest(),
+        "rustc_version": rustc,
+        "cargo_version": cargo,
+        "target_triple": host,
+        "profile": "release" if "release" in {part.lower() for part in binary.parts} else "debug",
+        "build_flags": "--release --locked --target" if "release" in {part.lower() for part in binary.parts} else "debug",
+        "logical_cpus": os.cpu_count() or 1,
+        "ram_bytes": 0,
+        "os_image": sys.platform,
+        "os_build": command_text(["cmd", "/c", "ver"]) if os.name == "nt" else "",
+        "storage_volume": binary.anchor,
+        "storage_filesystem": "unknown",
+        "runner_image": os.environ.get("ImageOS", "local"),
+        "power_policy": os.environ.get("RELAY_POWER_POLICY", "unknown"),
+        "av_policy": os.environ.get("RELAY_AV_POLICY", "unknown"),
+        "fixture_manifest_sha256": str(dataset.get("archive_sha256", "")),
+        "base_commit_report_sha256": "",
+    }
+    return values
+
+
+def aggregate_scale_telemetry(operations: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    values = [
+        result.get("telemetry", {})
+        for result in operations.values()
+        if isinstance(result.get("telemetry"), dict)
+    ]
+    aggregate: dict[str, Any] = {}
+    for metric in REQUIRED_SCALE_METRICS:
+        observed = [value.get(metric) for value in values if value.get(metric) is not None]
+        if not observed:
+            aggregate[metric] = None
+        elif metric in {"archive_bytes", "records"}:
+            aggregate[metric] = max(observed)
+        elif metric in {"cache_generation_before"}:
+            aggregate[metric] = min(observed)
+        elif metric in {"cache_generation_after", "query_hits"}:
+            aggregate[metric] = max(observed)
+        else:
+            aggregate[metric] = max(observed)
+    return aggregate
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Profile relay skill loading, CLI commands, and the Codex hook with optional budget gates."
     )
     parser.add_argument("--gate", action="store_true", help="exit non-zero when any selected operation exceeds budget")
-    parser.add_argument("--runs", type=int, default=5, help="timing samples per operation")
+    parser.add_argument("--runs", type=int, default=5, help="timing samples per operation (default: 5, or 21 with --scale-gates)")
     parser.add_argument(
         "--records",
         type=int,
@@ -1087,6 +1930,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="synthetic records for covered runtime paths; gate requires at least 100",
     )
     parser.add_argument("--only", action="append", help="operation name or comma-list; repeatable")
+    parser.add_argument("--binary", type=Path, help="explicit relay release binary used by gate runs")
+    parser.add_argument("--budget-profile", choices=("m1", "v2"), help="versioned built-in budget profile")
     parser.add_argument("--budget-file", type=Path, help="JSON budget override; defaults to tools/profiler/runtime_budgets.json")
     parser.add_argument("--budget-scale", type=float, default=1.0, help="multiply loaded budgets, useful for smoke tests")
     parser.add_argument("--command-timeout", type=int, default=120, help="subprocess timeout in seconds")
@@ -1094,24 +1939,60 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", action="store_true", help="also write cProfile data for skill load, CLI help, and Codex hook")
     parser.add_argument("--profile-dir", type=Path, help="directory for .prof files; default is ignored profiler results")
     parser.add_argument("--list-operations", action="store_true", help="print available operation names and exit")
+    parser.add_argument("--scale-gates", action="store_true", help="enable the 10k scale and paired parallel rebuild gates")
     return parser
-
-
 def main(argv: list[str] | None = None) -> int:
+    global ACTIVE_BINARY
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.list_operations:
         for name in OPERATION_ORDER:
             print(name)
         return 0
-    if args.runs < 1:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    scale_mode = bool(args.scale_gates)
+    has_runs_override = any(value == "--runs" or value.startswith("--runs=") for value in raw_argv)
+    has_records_override = any(value == "--records" or value.startswith("--records=") for value in raw_argv)
+    runs = args.runs if not scale_mode or has_runs_override else SCALE_RUNS
+    records = args.records if not scale_mode or has_records_override else SCALE_RECORDS
+    if runs < 1:
         parser.error("--runs must be >= 1")
-    if args.records < 1:
+    if records < 1:
         parser.error("--records must be >= 1")
+    gated = bool(args.gate or scale_mode)
+    if gated and args.binary is None:
+        parser.error("--scale-gates/--gate requires an explicit --binary release artifact")
+    if gated and args.budget_file is None and args.budget_profile is None:
+        parser.error("--scale-gates/--gate requires --budget-profile m1|v2 or --budget-file")
+    if args.binary is not None:
+        ACTIVE_BINARY = args.binary.resolve()
+        if not ACTIVE_BINARY.is_file():
+            parser.error(f"--binary does not exist: {ACTIVE_BINARY}")
+        if gated and "release" not in {part.lower() for part in ACTIVE_BINARY.parts}:
+            parser.error("--binary must be a release-profile artifact")
+    else:
+        ACTIVE_BINARY = RUST_BINARY
 
     try:
-        selected = expand_only(args.only)
-        budgets = load_budgets(args.budget_file, args.budget_scale)
+        requested = expand_only(args.only)
+        if scale_mode:
+            selected = list(SCALE_OPERATIONS) if args.only is None else requested
+            if set(selected) != set(SCALE_OPERATIONS):
+                raise ValueError("--scale-gates requires the complete SCALE_BUDGETS operation set; partial --only is rejected")
+            selected = list(SCALE_OPERATIONS)
+        else:
+            selected = requested
+        budget_path = args.budget_file
+        if budget_path is None and args.budget_profile:
+            budget_path = M1_BUDGET_FILE if args.budget_profile == "m1" else V2_BUDGET_FILE
+        loaded_budgets = load_budgets(budget_path, args.budget_scale)
+        scale_budgets = {
+            name: {
+                metric: round(value * args.budget_scale, 3)
+                for metric, value in budget.items()
+            }
+            for name, budget in SCALE_BUDGETS.items()
+        }
     except Exception as exc:
         print(f"profiler: {exc}", file=sys.stderr)
         return 2
@@ -1120,14 +2001,15 @@ def main(argv: list[str] | None = None) -> int:
     stdout_json = args.out == "-"
     profile_dir = args.profile_dir or (RESULTS_DIR / f"profiles-{now_stamp()}")
     config = Config(
-        runs=args.runs,
-        records=args.records,
+        runs=runs,
+        records=records,
         command_timeout=args.command_timeout,
         profile=args.profile,
         profile_dir=profile_dir,
         subprocess_warmups=DEFAULT_SUBPROCESS_WARMUPS,
+        scale_gates=scale_mode,
     )
-    if any(name != "skill_load_common_path" for name in selected):
+    if not scale_mode and any(name != "skill_load_common_path" for name in selected):
         try:
             ensure_rust_binary(config.command_timeout)
         except RuntimeError as exc:
@@ -1138,11 +2020,57 @@ def main(argv: list[str] | None = None) -> int:
     cache: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="conv-prof-gate-") as tmp:
         base = Path(tmp).resolve()
-        operations = {}
-        for name in selected:
-            operations[name] = OPERATIONS[name](config, base, cache)
-        profiles = run_profiles(selected, config, base, cache) if args.profile else []
-        gate = evaluate_gate(operations, budgets)
+        operations: dict[str, dict[str, Any]] = {}
+        if scale_mode:
+            scale_commands: dict[str, tuple[Callable[[Path, int], list[str]], Callable[[int], str | None] | None]] = {
+                "cli_list": (lambda root, _i: relay_cmd("list", "--json", "--limit", "10", "--relay-root", root), None),
+                "cli_upsert": (
+                    lambda root, _i: relay_cmd("upsert", "--stdin", "--relay-root", root),
+                    lambda _i: conversation_payload(0, topic="profile scale update"),
+                ),
+                "cli_rebuild_index": (lambda root, _i: relay_cmd("rebuild-index", "--relay-root", root), None),
+                "cli_search": (
+                    lambda root, _i: relay_cmd("search", "profiler conversation 0001", "--limit", "10", "--relay-root", root),
+                    None,
+                ),
+                "cli_search_body_fallback": (
+                    lambda root, _i: relay_cmd(
+                        "search", "profiler conversation 0001", "--limit", "10", "--no-semble", "--relay-root", root
+                    ),
+                    None,
+                ),
+                "cli_context": (
+                    lambda root, _i: relay_cmd("context", profiler_record_id(1), "--json", "--relay-root", root),
+                    None,
+                ),
+                "cli_regen_refs": (lambda root, _i: relay_cmd("regen-refs", "--relay-root", root), None),
+            }
+            for name in selected:
+                if name == "cli_rebuild_index_full":
+                    source = operation_dataset_root(base, config, cache, "scale-cli-rebuild-index-full")
+                    operations[name] = time_paired_cold_rebuild(config, source)
+                else:
+                    command, make_input = scale_commands[name]
+                    operations[name] = scale_operation(name, config, base, cache, command, make_input=make_input)
+            telemetry = aggregate_scale_telemetry(operations)
+            gate = evaluate_scale_gate(
+                operations,
+                telemetry,
+                records=config.records,
+                budgets=scale_budgets,
+                selected=selected,
+            )
+        else:
+            for name in selected:
+                operations[name] = OPERATIONS[name](config, base, cache)
+                if name in STRUCTURAL_GATES:
+                    operations[name]["structural_run"] = structural_run(name, config, base, cache)
+            telemetry = None
+            gate = evaluate_gate(operations, loaded_budgets)
+        profiles = run_profiles(selected, config, base, cache) if args.profile and not scale_mode else []
+        dataset_root_path = dataset_root(base, config, cache) if (scale_mode or any(name in RUNTIME_COVERAGE_METRICS for name in selected)) else base
+        dataset = dataset_report(dataset_root_path, config.records)
+        provenance = provenance_report(ACTIVE_BINARY, dataset)
         report = {
             "schema_version": 1,
             "repo": str(REPO),
@@ -1156,11 +2084,18 @@ def main(argv: list[str] | None = None) -> int:
                 "profile": config.profile,
                 "profile_dir": str(config.profile_dir),
                 "subprocess_warmups": config.subprocess_warmups,
+                "budget_profile": args.budget_profile,
+                "binary": str(ACTIVE_BINARY),
+                "scale_gates": scale_mode,
             },
-            "budgets": {name: budgets[name] for name in selected if name in budgets},
+            "budgets": scale_budgets if scale_mode else {name: loaded_budgets[name] for name in selected if name in loaded_budgets},
             "operations": operations,
             "profiles": profiles,
             "gate": gate,
+            "scale": {"telemetry": telemetry, "required_metrics": list(REQUIRED_SCALE_METRICS)} if scale_mode else None,
+            "dataset": dataset,
+            "provenance": provenance,
+            "promotion_eligible": config.runs == SCALE_RUNS,
             "elapsed_ms": round(ms_since(started), 3),
         }
 
@@ -1168,7 +2103,7 @@ def main(argv: list[str] | None = None) -> int:
     if not stdout_json:
         status = "PASSED" if report["gate"]["passed"] else "FAILED"
         print(json.dumps({"gate": status, "report": report_path, "failures": report["gate"]["failures"]}, indent=2))
-    if args.gate and not report["gate"]["passed"]:
+    if gated and not report["gate"]["passed"]:
         return 1
     return 0
 

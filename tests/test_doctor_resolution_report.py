@@ -161,17 +161,17 @@ a
         self.assertEqual(first.returncode, 0, first.stderr)
         out = load_json(first)
         self.assertEqual(len(out["parse_errors"]), 1)
-        self.assertEqual(out["warnings"], [])
+        self.assertEqual(
+            [warning.get("installer_repair") for warning in out["warnings"]],
+            ["unavailable"],
+        )
         self.assertTrue(out["fix"]["gitignore"])
         self.assertGreaterEqual(out["fix"]["ref_changes"], 1)
         self.assertEqual(out["index_health"]["valid"], True)
         self.assertEqual(out["index_health"]["records"], 2)
         installer = out["fix"]["installer_repair"]
-        self.assertTrue(installer["available"], installer)
-        self.assertEqual(installer["returncode"], 0, installer)
-        self.assertIn("--doctor-fix", installer["command"])
-        self.assertTrue((self.root / "bin" / ("relay.exe" if os.name == "nt" else "relay")).is_file())
-        self.assertTrue((self.home / ".codex" / "hooks.json").is_file())
+        self.assertFalse(installer["available"], installer)
+        self.assertIn("Plugin installation root", installer["reason"])
         self.assertEqual((self.root / ".gitignore").read_text(encoding="utf-8"), ".semble/\nindex.jsonl\n__pycache__/\n")
 
         child_md = (self.root / "convs" / "2026-01-01_child.md").read_text(encoding="utf-8")
@@ -187,7 +187,7 @@ a
         self.assertFalse(again["fix"]["gitignore"])
         self.assertEqual(again["fix"]["canonical_records"], [])
         self.assertEqual(again["fix"]["ref_changes"], 0)
-        self.assertEqual(again["fix"]["installer_repair"]["returncode"], 0)
+        self.assertFalse(again["fix"]["installer_repair"]["available"])
 
     def test_fix_does_not_canonicalize_duplicate_section_records(self) -> None:
         self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)

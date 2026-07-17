@@ -19,8 +19,8 @@ The default Plugin installation root is `~/.relay/`. The Relay archive is
 ├── relay/     # canonical installed Relay plugin root
 ├── convs/          # Relay archive: *.md records, source of truth
 │   └── YYYY-MM-DD_<slug>.md
-├── index.jsonl     # derived cache, one conversation record per line
-├── .semble/        # semantic search cache directory
+├── index.jsonl     # compatible derived export, one record per line
+├── .semble/        # index-v2 generations, postings, write lock, transaction journal
 ├── references/     # installed reference playbooks
 ├── hooks/          # canonical hook implementations
 └── bin/
@@ -47,11 +47,14 @@ Relay archive, and whether an explicit compatibility override was used.
 - `init`: create the Plugin installation root, Relay archive, `.semble/`,
   `.gitignore`, and rebuild `index.jsonl`. With no override, targets `~/.relay/`.
 - `upsert --stdin` / `--json PATH` `[--status ...]`: create or replace a distilled Relay record from JSON.
-- `rebuild-index`: rebuild `index.jsonl` from `~/.relay/convs/*.md`.
+- `rebuild-index [--full]`: freshen index-v2 and `index.jsonl`; `--full` reparses every record.
 - `regen-refs`: repair missing reverse refs, then rebuild the index.
-- `list [--status active|parked|closed] [--json] [--limit N]`: index-only listing.
-- `search "<query>" [--limit N]`: tiered filename/index/body search.
+- `list [--status active|parked|closed] [--json] [--limit N]`: list Relay records. After a shared-lock-safe recovery, this snapshots the Relay archive, reuses metadata-matching index-v2 rows, reparses changed/new records, and repairs derived cache state (`index.jsonl` remains a compatibility export).
+- `search "<query>" [--limit N] [--no-semble]`: exact-id, random-access posting,
+  optional Semble, then parallel body search.
 - `show <id-or-query> [--markdown]`: print one Relay record.
+- `context <id-or-query> [--budget-tokens N] [--json] [--no-refs]`: emit a
+  reconstruction-ordered, budget-aware pack with one-hop linked digests.
 - `set-status <id> active|parked|closed`: update status and timestamp.
 - `sidekick <parent> <topic> [--id ID] [--keep-parent-active]`: create an active side
   branch with `spawned-from` refs. By default the parent is parked after the child is
@@ -83,8 +86,9 @@ API loads TypeScript directly. Harnesses without an installed hook still save at
 milestones. Index rebuilds and ref regeneration remain persistent CLI responsibilities
 regardless of the counter backend.
 
-There is no timer for ref regeneration. `upsert` runs the eager write plus a byte-stable
-regen sweep, and `regen-refs` is the manual full reconciliation command.
+There is no timer for ref regeneration. Mutations update only the changed record and
+affected forward-ref neighbors in one journaled transaction; `regen-refs` is the
+manual full reconciliation command.
 
 The semantic search layer runs `semble search -k <N> <query> ~/.relay/convs --content
 docs` when `semble` is installed. To allow transient `uvx semble`, set
@@ -109,13 +113,16 @@ path is available, the CLI falls back to local body scoring and labels those hit
   },
   "resume": {
     "goal": "one-line goal",
+    "checkpoints": ["completed milestone"],
     "next_steps": ["..."],
     "open_questions": ["..."],
     "suggested_skills": ["relay:resume"]
   },
   "user_instructions": ["standing directive", "..."],
+  "environment": ["platform: Windows", "branch: relay-perf"],
+  "artifacts": ["src/main.rs — cache transaction implemented"],
   "condensed_transcript": [
-    {"u": "user turn", "a": "agent turn"},
+    {"u": "user turn", "a": "agent turn", "w": 3},
     "or a plain string bullet"
   ]
 }
@@ -123,11 +130,11 @@ path is available, the CLI falls back to local body scoring and labels those hit
 
 - `summary`, `dict`, and `qa` are mandatory; upsert fails without them.
 - `resume` (object), `user_instructions` (list or string), and `condensed_transcript`
-  (list of `{u, a}` objects and/or strings) are structured JSON keys rendered into the
+  (list of `{u, a, w}` objects and/or strings) are structured JSON keys rendered into the
   always-present `## resume`, `## user-instructions`, and `## condensed-transcript`
   sections. When empty they render `(none)`.
 - Section render order is fixed: mandatory sections `summary, dict, qa`, then optional
-  informational sections `sources, insights, decisions, digest`, then always-present
+  informational sections `sources, insights, decisions, environment, artifacts, digest`, then always-present
   recovery sections `resume, user-instructions, condensed-transcript`, then any extra
   sections alphabetically. The same order is used for structured `sections` input and
   raw `body` input.
@@ -141,12 +148,13 @@ path is available, the CLI falls back to local body scoring and labels those hit
 The branch commands are deterministic wrappers around the same record write path as
 `upsert`:
 
-- `sidekick` creates an active child with `spawned-from`; `regen-refs` adds the parent's
-  `spawned-to` reverse ref. After successful child creation, the parent is parked unless
+- `sidekick` creates an active child with `spawned-from` and adds the parent's
+  `spawned-to` reverse ref in the same transaction. The parent is parked unless
   `--keep-parent-active` is set.
 - `continue` creates an active child with `continued-from`, parks the parent after
   successful child creation, and carries forward the parent's dict, resume, qa, sources,
-  insights, and decisions when present.
+  insights, decisions, environment, checkpoints, instructions, and weighted transcript
+  markers when present. Artifacts are deliberately branch-local and are not inherited.
 - `return` requires an explicit digest string, renders it as `## digest`, closes the
   branch, repairs bidirectional refs, and rebuilds `index.jsonl`.
 

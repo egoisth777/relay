@@ -38,7 +38,7 @@ root) is `~/.relay/` by default. The Relay archive,
 - For `relay:save`, save/checkpoint requests, or `RELAY HANDOFF` reminders, read
   `~/.relay/references/save.md`.
 - For `relay:resume` or "continue where we left off", read
-  `~/.relay/references/resume.md`.
+  `~/.relay/references/resume.md`, then use `relay context <id>` for the reconstruction pack.
 - For `relay:list` or open/recent handoff lists, read `~/.relay/references/list.md`.
 - For `relay:park`, read `~/.relay/references/save.md` and save with status `parked`.
 - For `relay:sidekick`, `relay:return`, or `relay:continue`, read

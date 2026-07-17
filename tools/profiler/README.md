@@ -4,11 +4,12 @@
 skill startup and command latency:
 
 - common direct skill-file loading for `relay:save`, `relay:list`, and `relay:resume`
-- CLI subprocesses for `--help`, `init`, `list`, `upsert`, `rebuild-index`, and `regen-refs`
+- CLI subprocesses for `--help`, `init`, `list`, `upsert`, warm/full
+  `rebuild-index`, `regen-refs`, indexed search, and context-pack rendering
 - the Codex turn-counter hook under a copied temporary plugin layout
 
 The runtime gate uses 100 synthetic records by default and requires at least
-100-record coverage for `list`, `upsert`, `rebuild-index`, and `regen-refs`.
+100-record coverage for every archive runtime workload.
 Those operations run against populated temporary roots, and the JSON report
 includes before/after coverage counts so empty-root or low-record profiles fail
 the gate instead of silently passing.
@@ -26,19 +27,19 @@ counter directory.
 Run a budget gate:
 
 ```powershell
-python tools/profiler/relay_loading_profiler.py --gate
+python tools/profiler/relay_loading_profiler.py --gate --binary <release-relay> --budget-profile v2
 ```
 
 Run the required runtime coverage explicitly:
 
 ```powershell
-python tools/profiler/relay_loading_profiler.py --gate --runs 1 --records 100
+python tools/profiler/relay_loading_profiler.py --gate --binary <release-relay> --budget-profile v2 --runs 21 --records 100
 ```
 
 Limit a run to selected operations:
 
 ```powershell
-python tools/profiler/relay_loading_profiler.py --gate --only cli_list,cli_upsert
+python tools/profiler/relay_loading_profiler.py --gate --binary <release-relay> --budget-profile v2 --only cli_list,cli_upsert
 ```
 
 An empty `--only` selection fails the gate.
@@ -61,8 +62,19 @@ Write `cProfile` data to an explicit directory:
 python tools/profiler/relay_loading_profiler.py --profile --profile-dir $env:TEMP\conv-profiles
 ```
 
-Default budgets live in `runtime_budgets.json`. The latency gates are 100 ms
-median / 125 ms max for CLI subprocesses and 50 ms median / 75 ms max for the
-Codex hook. Budget values and `--budget-scale` must be finite numbers. Reports and `.prof` files under
+Versioned budgets live in `runtime_budgets.m1.json` and
+`runtime_budgets.v2.json`; gate mode requires one explicitly (or an explicit budget
+file) and an explicit release binary. Every subprocess gets two warmups and cloned
+pre-state per sample. Reports include provenance, fixture metadata, structural I/O,
+coverage, resources, and all failed/timed-out attempts. Scale gates default to the
+10,000-record/21-run profile and require an explicit release binary and budget profile:
+
+```powershell
+python tools/profiler/relay_loading_profiler.py --scale-gates --binary <release-relay> --budget-profile v2
+```
+
+Use `--runs` for deterministic integration-test overrides; such reports are not
+promotion eligible unless they retain 21 measured runs. Budget values and `--budget-scale` must be
+finite numbers. Reports and `.prof` files under
 `tools/profiler/results/` are ignored so timestamped profiler artifacts do not
 become tracked source files.

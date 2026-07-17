@@ -5,29 +5,24 @@ disable-model-invocation: false
 argument-hint: "[filter]"
 ---
 
-Run the Relay `relay:list` flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.relay/` by default) and reads records from the Relay archive (`~/.relay/convs/`).
-
-Do not load broad instructions for the common path; this file is enough to list normal records.
+Run the Relay flow. Plugin source is this repo. The installed CLI lives under the Plugin installation root (`~/.relay/` by default) and reads records from the Relay archive (`~/.relay/convs/`). Do not load broad instructions for the common path; this file suffices.
 
 ## Common Path
 
-1. For recent/open records, run:
-   `~/.relay/bin/relay list --limit 10`
-2. If `$ARGUMENTS` is a clear status such as `active`, `parked`, or `closed`, run:
-   `~/.relay/bin/relay list --status <status> --limit 20`
-3. If you need machine-readable output for simple filtering, run:
-   `~/.relay/bin/relay list --json --limit 50`
-4. Present ids with topic, status, updated time, and open-question count. Do not read individual conversation markdown files just to list them.
+1. Recent/open: `~/.relay/bin/relay list --limit 10`
+2. By status (`active`/`parked`/`closed`): `~/.relay/bin/relay list --status <status> --limit 20`
+3. JSON: `~/.relay/bin/relay list --json --limit 50`
+4. Show ids with topic, status, updated time, and open questions. Do not read individual files to list.
 
 ## Required Rules
 
-- The list command reads `~/.relay/index.jsonl`, a derived cache rebuilt from the Relay archive.
-- Treat `~/.relay/convs/*.md` as source of truth if a later action needs a full record.
-- If the index appears stale or missing, rebuild it with `~/.relay/bin/relay rebuild-index`, then rerun the list command.
-- Keep the result compact. Listing is orientation, not resume.
+- Command queries cache kept fresh by snapshotting archive, reusing metadata-matching rows, parsing changed/new records, and safely repairing derived state. Legacy `index.jsonl` is retained as compatibility export.
+- `~/.relay/convs/*.md` is source of truth for full records.
+- Rebuilding cache (`~/.relay/bin/relay rebuild-index`) is optional for troubleshooting, not freshness.
+- Keep output compact; listing is orientation.
 
 ## Lazy References
 
-Only after the common list command is not enough for advanced behavior, read `~/.relay/references/list.md`. Examples: uncommon filtering, troubleshooting derived counts, or command details not covered above.
+Only after the common list is not enough for advanced behavior, read `~/.relay/references/list.md`.
 
 $ARGUMENTS

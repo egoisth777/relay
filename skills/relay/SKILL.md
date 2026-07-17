@@ -29,7 +29,7 @@ the Plugin installation root is `~/.relay/`, and its Relay archive at
 - `relay:save`, checkpoint requests, and `RELAY HANDOFF` reminders: read
   `~/.relay/references/save.md`.
 - `relay:resume` and "continue where we left off": read
-  `~/.relay/references/resume.md`.
+  `~/.relay/references/resume.md`, then use `relay context <id>` for the reconstruction pack.
 - `relay:list` and open/recent handoff requests: read
   `~/.relay/references/list.md`.
 - `relay:park`: use `~/.relay/references/save.md` with status `parked`.

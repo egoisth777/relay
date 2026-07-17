@@ -1,0 +1,13 @@
+{
+  "skill_load_common_path": {"median_ms": 10, "max_ms": 50, "file_count": 2, "bytes": 5120, "rough_tokens": 900, "broad_file_reads": 0},
+  "cli_help": {"median_ms": 100, "max_ms": 125},
+  "cli_init": {"median_ms": 100, "max_ms": 125},
+  "cli_list": {"median_ms": 100, "max_ms": 125},
+  "cli_upsert": {"median_ms": 100, "max_ms": 125},
+  "cli_rebuild_index": {"median_ms": 100, "max_ms": 125},
+  "cli_rebuild_index_full": {"median_ms": 300, "max_ms": 400},
+  "cli_regen_refs": {"median_ms": 100, "max_ms": 125},
+  "cli_search": {"median_ms": 100, "max_ms": 125},
+  "cli_context": {"median_ms": 100, "max_ms": 125},
+  "codex_hook": {"median_ms": 50, "max_ms": 75}
+}
