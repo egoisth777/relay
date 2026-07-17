@@ -28,6 +28,7 @@ REQUIRED_CLI_SUBCOMMANDS = {
     "list",
     "search",
     "show",
+    "context",
     "import",
     "doctor",
     "hook",

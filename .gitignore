@@ -10,7 +10,19 @@ __pycache__/
 tools/profiler/results/
 tools/profiler/*.prof
 tools/profiler/**/*.prof
-/.arca/
+/.arca/*
+!/.arca/index/
+/.arca/index/*
+!/.arca/index/ubiquitous-language.md
+!/.arca/space/
+/.arca/space/*
+!/.arca/space/relay-sp/
+/.arca/space/relay-sp/*
+!/.arca/space/relay-sp/what/
+/.arca/space/relay-sp/what/*
+!/.arca/space/relay-sp/what/architecture.md
+!/.arca/space/relay-sp/what/manifest.md
+!/.arca/space/relay-sp/what/flows.md
 
 # locally-installed agent skill marketplace (not Relay source)
 .agents/

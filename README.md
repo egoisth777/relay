@@ -25,8 +25,8 @@ plugin and the canonical hook root, `~/.relay/hooks/`.
 │   ├── .codex-plugin/
 │   └── skills/
 ├── convs/          # Relay archive: Markdown handoff records, source of truth
-├── index.jsonl     # derived cache (rebuildable)
-├── .semble/        # semantic-search cache and private hook state
+├── index.jsonl     # compatible derived export (rebuildable)
+├── .semble/        # index-v2 generations, postings, journal, lock, hook state
 ├── references/     # installed Relay playbooks
 ├── hooks/          # canonical hook implementations
 └── bin/
@@ -136,8 +136,7 @@ injected, run the `/relay:save` flow silently and report only the saved record I
 
 # find and resume a handoff
 ~/.relay/bin/relay search "auth redesign"
-~/.relay/bin/relay show <id> --markdown
-~/.relay/bin/relay set-status <id> active
+~/.relay/bin/relay context <id> --budget-tokens 8000
 
 # list, repair, and diagnose
 ~/.relay/bin/relay list --limit 10
@@ -153,13 +152,35 @@ Records are Markdown with thin TOML frontmatter (`id`, `topic`, `status`, `tags`
 - `## summary` — one-line orientation
 - `## dict` — agreed or coined language
 - `## qa` — the question-and-answer spine; `Q (open)` marks live threads
-- `## resume` — goal, next steps, open questions, suggested skills
+- `## resume` — goal, completed checkpoints, next steps, open questions, suggested skills
 - `## user-instructions` — standing directives for the next session
-- `## condensed-transcript` — compressed chronology for deep context
+- `## environment` — reference-only execution environment
+- `## artifacts` — reference-only touched files, commits, PRs, and their state
+- `## condensed-transcript` — compressed chronology with durable weights 1–3
 - `## sources`, `## insights`, `## decisions`, `## digest` — optional evidence
 
 `summary`, `dict`, and `qa` are required. The three handoff sections always exist;
 empty sections render as `(none)`.
+
+## Performance and recovery
+
+Relay recursively snapshots the Relay archive once per archive-consuming command and
+parses changed records across a bounded worker pool. Set `RELAY_SCAN_THREADS=1..64` to
+override the default (available parallelism, capped at eight). The fingerprinted cache
+under `.semble/index-v2/` stores generation-named record rows and random-access search
+postings; `index.jsonl` remains the stable, greppable compatibility export. Both are
+derived and self-heal from Markdown records. `RELAY_NO_CACHE=1` bypasses index-v2 for a
+single invocation, while `rebuild-index --full` deliberately reparses every record.
+
+Mutations publish a durable `.semble/txn.pending` journal before record after-images,
+then commit cache generations manifest-last. The next archive command rolls an
+interrupted journal forward before reading. Do not delete this journal manually.
+
+`relay context` emits frontmatter, language, standing instructions, checkpoints,
+questions, decisions, environment/artifacts references, weight-trimmed transcript,
+one-hop linked digests, and a structured activation argv. `--budget-tokens` applies an
+exact UTF-8 byte cap; `--json` exposes the versioned pack and `--no-refs` suppresses
+linked context.
 
 ## Requirements
 

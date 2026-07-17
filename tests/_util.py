@@ -25,6 +25,14 @@ _RESOLUTION_ENV = (
     "BRAIN_CONV",
     "RELAY_USE_UVX_SEMBLE",
     "CONV_USE_UVX_SEMBLE",
+    "RELAY_NO_CACHE",
+    "RELAY_SCAN_THREADS",
+    "RELAY_SEMBLE_TIMEOUT",
+    "RELAY_TEST_MODE",
+    "RELAY_TEST_NOW",
+    "RELAY_TEST_TRACE_IO",
+    "RELAY_TEST_CRASH_AT",
+    "RELAY_TEST_BARRIER_AFTER_LOCK",
 )
 
 
@@ -40,7 +48,7 @@ def clean_env(*, home: Path | None = None, **overrides: object) -> dict[str, str
         env[key] = str(value)
     return env
 
-def run_cli(args, cwd, env=None, input=None) -> subprocess.CompletedProcess:
+def run_cli(args, cwd, env=None, input=None, timeout=None) -> subprocess.CompletedProcess:
     if env is None:
         env = clean_env()
     if not RUST_BINARY.is_file():
@@ -52,6 +60,7 @@ def run_cli(args, cwd, env=None, input=None) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         input=input,
+        timeout=timeout,
     )
 
 

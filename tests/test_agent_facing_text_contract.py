@@ -48,8 +48,7 @@ DIRECT_COMMON_PATH_COMMANDS = {
     ),
     "resume": (
         "~/.relay/bin/relay search",
-        "~/.relay/bin/relay show",
-        "~/.relay/bin/relay set-status",
+        "~/.relay/bin/relay context",
     ),
     "park": (
         "~/.relay/bin/relay init",

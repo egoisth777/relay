@@ -11,6 +11,4 @@ Use this for `relay:list`, "what's open", and recent conversation requests.
 - Filter one status:
   `~/.relay/bin/relay list --status active --limit 20`
 
-The list command reads only the derived index at `~/.relay/index.jsonl`. It does not
-read Relay archive markdown files directly. The `open` column is a derived cache
-count rebuilt from `## qa` whenever the index is rebuilt.
+The list command automatically ensures freshness by snapshotting the archive, reusing metadata-matching cache rows, and parsing only changed or new records. It safely repairs derived cache state (such as the `open` count derived from `## qa`) on the fly when possible, while retaining `index.jsonl` as a compatibility export.
