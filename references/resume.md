@@ -21,23 +21,28 @@ parallel body fallback. `--no-semble` bypasses the external semantic tier comple
 Every record is a resumption point. Read and internalize in this order:
 
 1. `## summary`: orientation — what this conversation is.
-2. `## dict`: ubiquitous language — the agreed terms, first.
+2. `## glossary`: record glossary — adopt the agreed terms before acting.
 3. `## user-instructions`: **adopt these as standing behavior** for the resumed session
    (constraints, workflow preferences, tone the user set).
 4. `## resume`: the plan. Note the `goal`, then **act on `next-steps`**, keep
    `open-questions` live, and invoke the listed `suggested-skills`.
 5. `## qa`: the spine of the conversation; treat `Q (open)` entries as live threads.
-6. `## decisions`, `## environment`, and `## artifacts`: settled choices and
-   reference-only execution state. Do not relitigate decisions unless asked.
+6. `## decisions`, `## environment`, `## artifacts`, `## sources`, and `## insights`:
+   settled choices and reference-only execution state. When present, sources and
+   insights arrive in the context pack; read referenced files only as the resumed task
+   needs them. Do not relitigate decisions unless asked.
 7. `## condensed-transcript`: deep context in chronological order; budget trimming
    preserves load-bearing weight-3 exchanges longest.
-8. `## insights` and `## sources`: realizations, plus files/skills to read only as the
-   resumed task needs them.
-9. Linked conversations through frontmatter refs. Surface useful branch digests from
+8. Linked conversations through frontmatter refs: surface useful branch digests from
    closed peers.
+9. `next action argv`: execute it through the harness without re-quoting it as a shell
+   string.
+10. `truncated` flag: note whether budget trimming removed context.
 
-The context pack includes frontmatter, one-hop closed-branch digests, warnings for
-unavailable links, and an unambiguous `next action argv` for marking the record active.
-Execute that argv through the harness without re-quoting it as a shell string.
+The context pack starts with the `relay context pack v2` banner and includes fixed
+sections `summary, glossary, user-instructions, resume, qa`; optional sections
+`decisions, environment, artifacts, sources, insights` when present; then transcript,
+linked-context, action argv, and the truncated flag. It also includes frontmatter,
+one-hop closed-branch digests, and warnings for unavailable links.
 
 Then present a short summary and the open threads.

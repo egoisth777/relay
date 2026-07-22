@@ -9,6 +9,14 @@
 5. Execute list/search/show/context from the fresh in-memory rows.
 6. Repair derived artifacts atomically when safe; never serve a stale changed row.
 
+## Search tier selection
+
+1. Use an installed `semble` executable when available.
+2. Otherwise, use `uvx semble` only when `uvx` is available and
+   `RELAY_USE_UVX_SEMBLE=1` exactly.
+3. Otherwise, use body fallback.
+4. Report the same selected tier from `relay doctor`.
+
 ## Mutation
 
 1. Acquire the exclusive lock and replay interrupted state.
@@ -22,12 +30,15 @@
 ## Resume/context relay
 
 1. Resolve an exact or unambiguous record.
-2. Reconstruct frontmatter, summary, dict, instructions, resume/checkpoints, qa,
-   decisions, environment, artifacts, and weighted transcript.
+2. Reconstruct the fixed sections `summary`, `glossary`, `user-instructions`, `resume`,
+   and `qa`, followed by optional `decisions`, `environment`, `artifacts`, `sources`,
+   and `insights`, then the weighted transcript.
 3. Add sorted one-hop refs and closed-record digests.
 4. Trim linked units first, then low-weight/older transcript exchanges and optional
-   sections until the requested byte budget fits.
-5. Emit the context pack and activation argv without mutating status.
+   sections in removal order `insights`, `sources`, `artifacts`, `environment`, `decisions`
+   until the requested byte budget fits.
+5. Emit the `relay context pack v2` banner, context pack through its action argv and
+   final `truncated: yes|no` marker, and activation argv without mutating status.
 
 ## Full repair
 

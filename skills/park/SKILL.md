@@ -14,7 +14,7 @@ Do not load broad instructions for the common path; this file is enough to park 
 1. Ensure the Plugin installation root and Relay archive exist:
    `~/.relay/bin/relay init`
 2. Infer a concise topic and tags from the current conversation. Treat `$ARGUMENTS` as an id or topic hint.
-3. Extract a normal save record: `summary`, `dict`, and `qa` are mandatory; `resume`, `user_instructions`, `condensed_transcript`, `sources`, `insights`, and `decisions` are optional.
+3. Extract a normal save record: `summary`, `glossary`, and `qa` are mandatory; `resume`, `user_instructions`, `condensed_transcript`, `sources`, `insights`, and `decisions` are optional.
 4. Pipe the conversation JSON to the minimal park owner command:
    `~/.relay/bin/relay upsert --stdin --status parked`
 5. Report the resulting id/topic and that the conversation is parked.

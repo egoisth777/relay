@@ -13,12 +13,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _util import clean_env, load_json, run_cli  # noqa: E402
 
 
-def payload(topic: str, *, cid: str | None = None) -> str:
+def payload(
+    topic: str,
+    *,
+    cid: str | None = None,
+    status: str = "active",
+    updated: str = "2026-01-01T00:00:00Z",
+) -> str:
     raw = {
         "topic": topic,
+        "status": status,
+        "updated": updated,
         "sections": {
             "summary": f"{topic} summary",
-            "dict": "- **edge** - case",
+            "glossary": "- **edge** - case",
             "qa": "- **Q:** stable? **A:** yes.",
         },
     }
@@ -34,6 +42,7 @@ def record_text(
     status: str = "active",
     marker: str = "edge marker",
     refs: str = "refs = []",
+    updated: str = "2026-01-01T00:00:00Z",
 ) -> str:
     return f"""+++
 id = "{cid}"
@@ -42,12 +51,12 @@ status = "{status}"
 tags = ["edge"]
 {refs}
 created = "2026-01-01T00:00:00Z"
-updated = "2026-01-01T00:00:00Z"
+updated = "{updated}"
 +++
 ## summary
 {marker}
 
-## dict
+## glossary
 - **edge** - case
 
 ## qa
@@ -169,6 +178,77 @@ class CliEdgeCasesTest(unittest.TestCase):
         doctor = run_cli(["doctor"], cwd=self.tmp, env=self.env)
         self.assertEqual(doctor.returncode, 0, doctor.stderr)
         self.assertEqual(load_json(doctor)["parse_errors"], [])
+
+    def test_list_groups_statuses_and_sorts_within_each_group(self) -> None:
+        fixtures = [
+            ("conv_260201_active-later", "active", "2026-01-01T00:05:00Z"),
+            ("conv_260202_active-zulu", "active", "2026-01-01T00:03:00Z"),
+            ("conv_260203_active-alpha", "active", "2026-01-01T00:03:00Z"),
+            ("conv_260204_parked-later", "parked", "2026-01-01T00:04:00Z"),
+            ("conv_260205_parked-zulu", "parked", "2026-01-01T00:02:00Z"),
+            ("conv_260206_parked-alpha", "parked", "2026-01-01T00:02:00Z"),
+            ("conv_260207_closed-later", "closed", "2026-01-01T00:06:00Z"),
+            ("conv_260208_closed-zulu", "closed", "2026-01-01T00:01:00Z"),
+            ("conv_260209_closed-alpha", "closed", "2026-01-01T00:01:00Z"),
+        ]
+        self.db.mkdir(parents=True)
+        for cid, status, updated in fixtures:
+            (self.db / f"{cid}.md").write_text(
+                record_text(
+                    cid=cid,
+                    topic=f"{status} {cid}",
+                    status=status,
+                    updated=updated,
+                ),
+                encoding="utf-8",
+            )
+        rebuilt = run_cli(["rebuild-index"], cwd=self.tmp, env=self.env)
+        self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+
+        expected = [
+            "conv_260201_active-later",
+            "conv_260202_active-zulu",
+            "conv_260203_active-alpha",
+            "conv_260204_parked-later",
+            "conv_260205_parked-zulu",
+            "conv_260206_parked-alpha",
+            "conv_260207_closed-later",
+            "conv_260208_closed-zulu",
+            "conv_260209_closed-alpha",
+        ]
+
+        text = run_cli(["list"], cwd=self.tmp, env=self.env)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        text_ids = [
+            line.split(" | ", 1)[0]
+            for line in text.stdout.splitlines()
+            if line.startswith("conv_")
+        ]
+        self.assertEqual(text_ids, expected)
+
+        listed = run_cli(["list", "--json"], cwd=self.tmp, env=self.env)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual([record["id"] for record in load_json(listed)], expected)
+
+        parked_expected = [
+            "conv_260204_parked-later",
+            "conv_260205_parked-zulu",
+            "conv_260206_parked-alpha",
+        ]
+        parked = run_cli(["list", "--status", "parked", "--json"], cwd=self.tmp, env=self.env)
+        self.assertEqual(parked.returncode, 0, parked.stderr)
+        self.assertEqual([record["id"] for record in load_json(parked)], parked_expected)
+
+        parked_text = run_cli(["list", "--status", "parked"], cwd=self.tmp, env=self.env)
+        self.assertEqual(parked_text.returncode, 0, parked_text.stderr)
+        self.assertEqual(
+            [
+                line.split(" | ", 1)[0]
+                for line in parked_text.stdout.splitlines()
+                if line.startswith("conv_")
+            ],
+            parked_expected,
+        )
 
     def test_doctor_reports_malformed_record_without_crashing(self) -> None:
         self.db.mkdir(parents=True)
@@ -351,7 +431,7 @@ class CliEdgeCasesTest(unittest.TestCase):
                     "refs": [],
                     "sections": {
                         "summary": "child summary",
-                        "dict": "- **child** - moved",
+                        "glossary": "- **child** - moved",
                         "qa": "- **Q:** linked? **A:** no.",
                     },
                 }
@@ -374,7 +454,7 @@ class CliEdgeCasesTest(unittest.TestCase):
                     "refs": [{"id": parent_b, "rel": "spawned-from"}],
                     "sections": {
                         "summary": "child summary",
-                        "dict": "- **child** - moved",
+                        "glossary": "- **child** - moved",
                         "qa": "- **Q:** linked? **A:** yes.",
                     },
                 }

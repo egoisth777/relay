@@ -58,18 +58,20 @@ class StoreLayoutTest(unittest.TestCase):
         out = load_json(proc)
         root = self.home / ".relay"
         self.assertEqual(Path(out["plugin_installation_root"]), root)
-        self.assertEqual(Path(out["conversation_database"]), root / "convs")
+        self.assertEqual(Path(out["relay_archive"]), root / "convs")
+        self.assertEqual(out["conversation_database"], out["relay_archive"])
         self.assertNotIn("conv_root", out)
         self.assertNotIn("convs", out)
         aliases = out["deprecated"]["aliases"]
         self.assertEqual(Path(aliases["conv_root"]), root)
         self.assertEqual(Path(aliases["convs"]), root / "convs")
+        self.assertEqual(aliases["conversation_database"], out["relay_archive"])
 
     def test_records_are_written_under_convs(self) -> None:
         root = self.home / ".relay"
         payload = (
             '{"topic": "layout check", "sections": '
-            '{"summary": "s", "dict": "- **t** - m", "qa": "- **Q:** q? **A:** a."}}'
+            '{"summary": "s", "glossary": "- **t** - m", "qa": "- **Q:** q? **A:** a."}}'
         )
         run_cli(["init"], cwd=self.tmp, env=self.env)
         proc = run_cli(["upsert", "--stdin"], cwd=self.tmp, env=self.env, input=payload)

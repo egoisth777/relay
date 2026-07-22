@@ -12,7 +12,7 @@ Run the Relay flow. Plugin source is this repo. The installed CLI lives under th
 1. Initialize: `~/.relay/bin/relay init`
 2. Infer topic/tags; treat `$ARGUMENTS` as id/topic hint.
 3. Extract record in priority order:
-   - `dict`: agreed terms and meanings.
+   - `glossary`: agreed terms and meanings.
    - `user-instructions`: directives/tone, constraints, and workflow preferences.
    - `resume`: `goal`, completed `checkpoints` (avoid redoing work), `next_steps`, `open_questions`, `suggested_skills`.
    - `qa`: QA pairs; unresolved as `**Q (open):**`.
@@ -27,7 +27,7 @@ Run the Relay flow. Plugin source is this repo. The installed CLI lives under th
 ## Required Rules
 
 - `~/.relay/convs/*.md` is source of truth; `~/.relay/index.jsonl` is derived cache.
-- `summary`, `dict`, and `qa` are mandatory. `resume`, `user_instructions`, `condensed_transcript`, `environment`, and `artifacts` may be empty or omitted but should never be fabricated.
+- `summary`, `glossary`, and `qa` are mandatory. `resume`, `user_instructions`, `condensed_transcript`, `environment`, and `artifacts` may be empty or omitted but should never be fabricated.
 - Redact secrets/PII. Reference artifacts by path, commit, PR, or URL (never duplicate contents).
 - Keep records concise; exclude chatter, acknowledgments, and tool noise.
 - Edit settled decisions only when explicitly requested.
@@ -38,7 +38,7 @@ Run the Relay flow. Plugin source is this repo. The installed CLI lives under th
 {
   "topic": "db", "status": "active", "tags": ["infra"], "refs": [],
   "sections": {
-    "summary": "sum", "dict": "- **t** - m.", "qa": "- **Q:** q? **A:** a.\\n- **Q (open):** o?",
+    "summary": "sum", "glossary": "- **t** - m.", "qa": "- **Q:** q? **A:** a.\\n- **Q (open):** o?",
     "sources": "", "insights": "", "decisions": ""
   },
   "resume": {
@@ -50,6 +50,8 @@ Run the Relay flow. Plugin source is this repo. The installed CLI lives under th
   "condensed_transcript": [{"u": "u", "a": "a", "w": 3}]
 }
 ```
+
+`dict` is a deprecated input alias, accepted forever, never emitted.
 
 ## Lazy References
 

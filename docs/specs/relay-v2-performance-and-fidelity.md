@@ -655,12 +655,14 @@ machinery (`environment` and `artifacts` are inserted after `decisions` in `ORDE
   single parser is shared by context and doctor.
 
 Records without the new keys parse, render, index, and resume exactly as today.
-The three existing mandatory sections remain `summary`/`dict`/`qa`; the new structured
-keys add only type/range validation. `environment` and `artifacts` accept a string or a
-list of strings and render `(none)` only when explicitly present and empty; they are
-otherwise omitted for legacy byte compatibility.
+The three existing mandatory sections remain `summary`/`glossary`/`qa`; `dict` is a
+deprecated compatibility alias accepted on input indefinitely and never emitted, because
+legacy import can copy raw bytes containing `## dict` forever. The new structured keys
+add only type/range validation. `environment` and `artifacts` accept a string or a list
+of strings and render `(none)` only when explicitly present and empty; they are otherwise
+omitted for legacy byte compatibility.
 
-`sidekick` and `continue` carry the parent's dict, resume/checkpoints,
+`sidekick` and `continue` carry the parent's glossary, resume/checkpoints,
 user-instructions, environment, and weighted transcript markers through the child
 record; artifacts are deliberately not inherited because they describe files touched
 by one execution branch. Generated child-specific summary/goal rules remain in force.
@@ -671,17 +673,19 @@ Cache deletion/rebuild and branch round trips must not change marker bytes or we
 ```
 relay context <id-or-query> [--budget-tokens N] [--json] [--no-refs]
 ```
+Text output begins with the `relay context pack v2` banner; JSON carries the matching
+`schema_version: 2`.
 
 One command replaces `show --markdown` + manual ref chasing. Target resolution uses the
 same exact/ambiguous/not-found contract as `show`. It emits a rehydration pack in this
 exact reconstruction order from `references/resume.md`:
 
 1. Frontmatter digest (id, topic, status, tags, refs).
-2. `## summary`, `## dict` (language first — invariant).
+2. `## summary`, `## glossary` (language first — invariant).
 3. `## user-instructions` (standing behavior).
 4. `## resume` including checkpoints.
 5. `## qa` (open questions flagged).
-6. `## decisions`, `## environment`, `## artifacts`.
+6. `## decisions`, `## environment`, `## artifacts`, `## sources`, `## insights`.
 7. `## condensed-transcript`, weight-trimmed (see below).
 8. **Linked context (1 hop):** for each ref, the target's topic + status, and for
    closed branches their `## digest` — the piece agents forget to fetch today.
@@ -702,23 +706,23 @@ id/relation/error; text renders the same fields on one line.
 `ceil(UTF-8 rendered-text bytes / 4)`, and successful text output must be at most `4*N`
 bytes. JSON uses the identical logical selection and reports the equivalent text
 estimate, but JSON transport overhead is not byte-capped.
-Frontmatter, `summary`, `dict`, `user-instructions`, `resume`, `qa`, the closing action,
-and the final marker are the mandatory envelope. If that envelope alone exceeds N,
-the command exits 2, prints the required minimum estimate, emits no partial pack, and
-does not mutate the record or its status.
+The banner, frontmatter, `summary`, `glossary`, `user-instructions`, `resume`, `qa`, the
+closing action, and the final marker are the mandatory envelope. If that envelope alone
+exceeds N, the command exits 2, prints the required minimum estimate, emits no partial
+pack, and does not mutate the record or its status.
 
 Optional units are indivisible and removed in this deterministic order until the cap
 fits: linked entries in reverse display order; transcript exchanges by weight ascending
-then age oldest-first; then whole `artifacts`, `environment`, and `decisions` sections
-in that order. Display order never changes. The pack always ends with exactly one
-`truncated: yes|no` marker; it is `yes` iff any optional unit was omitted. No budget
-means no trimming.
+then age oldest-first; then whole `insights`, `sources`, `artifacts`, `environment`, and
+`decisions` sections in that order. Display order never changes. The pack always ends
+with exactly one `truncated: yes|no` marker; it is `yes` iff any optional unit was omitted.
+No budget means no trimming.
 
 `--json` emits a versioned representation from which text output is rendered:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "conv_...",
   "plugin_installation_root": "/resolved/.relay",
   "budget_tokens": null,
@@ -744,17 +748,17 @@ Plugin installation root), not a PATH-dependent alias.
 ### 10.3 Fidelity lint in `doctor`
 
 `doctor` gains a per-record fidelity score (0–5): non-`(none)` resume goal, ≥1
-next-step, ≥1 dict entry, user-instructions present, ≥3 transcript exchanges. Records
+next-step, ≥1 glossary entry, user-instructions present, ≥3 transcript exchanges. Records
 scoring ≤2 produce a warning (`{"file": …, "fidelity": 2, "missing": [...]}`).
 `--fix` never fabricates content — fidelity stays report-only, consistent with the
 existing "never fabricate to fill sections" rule.
 
-A dict entry is a nonblank Markdown list line in `## dict`; a next-step is an item
+A glossary entry is a nonblank Markdown list line in `## glossary`; a next-step is an item
 under the rendered `next-steps` group; user-instructions means at least one non-
 `(none)` line. A structured weight marker plus its following U/A block counts as one
 transcript exchange; legacy `- U:` with an optional immediately following `- A:` also
 counts as one, and any other nonblank legacy list line counts as one. `missing` uses the
-fixed key order `resume-goal,next-step,dict-entry,user-instructions,transcript-entries`
+fixed key order `resume-goal,next-step,glossary-entry,user-instructions,transcript-entries`
 rather than alphabetical order, so diagnostics are stable and actionable.
 
 ### 10.4 Playbook updates

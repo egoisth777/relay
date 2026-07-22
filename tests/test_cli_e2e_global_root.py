@@ -85,7 +85,7 @@ def conversation_payload(*, summary_marker: str, resume_goal: str, updated: str)
             ],
             "sections": {
                 "summary": f"{summary_marker} summary from the installed CLI",
-                "dict": "- **global-root** - default Plugin installation root",
+                "glossary": "- **global-root** - default Plugin installation root",
                 "qa": "- **Q (open):** Can this resume after rebuild? **A:** yes.",
                 "decisions": "- Default commands use ~/.relay/convs.",
             },
@@ -111,7 +111,7 @@ updated = "2026-07-04T00:00:00Z"
 ## summary
 local decoy
 
-## dict
+## glossary
 - **x** - y
 
 ## qa

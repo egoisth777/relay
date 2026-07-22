@@ -21,7 +21,7 @@ def payload(topic: str, *, cid: str | None = None, refs: list[dict[str, str]] | 
         "topic": topic,
         "sections": {
             "summary": f"{topic} summary",
-            "dict": "- **term** - meaning",
+            "glossary": "- **term** - meaning",
             "qa": "- **Q:** q? **A:** a.",
         },
     }
@@ -211,7 +211,7 @@ updated = "2026-01-03T00:00:00Z"
 ## summary
 local
 
-## dict
+## glossary
 - **x** - y
 
 ## qa

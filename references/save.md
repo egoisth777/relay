@@ -8,7 +8,7 @@ Use this for `relay:save`, `relay:park`, auto-save reminders, and natural-langua
    `~/.relay/bin/relay init`
 2. Infer a concise topic and tags from the current conversation.
 3. Extract state in this priority order (highest value first):
-   - `dict`: terms coined or agreed on, with meanings. This is the highest-value section
+   - `glossary`: terms coined or agreed on, with meanings. This is the highest-value section
      — the agreed language a cold agent must adopt.
    - `user-instructions`: standing directives the user gave (constraints, workflow
      preferences, tone) that a fresh agent must keep honoring.
@@ -45,13 +45,13 @@ Use this for `relay:save`, `relay:park`, auto-save reminders, and natural-langua
 
 ```json
 {
-  "topic": "conversation database skill implementation",
+  "topic": "Relay archive skill implementation",
   "status": "active",
   "tags": ["skill", "infra"],
   "refs": [{"id": "conv_260615_parent", "rel": "spawned-from"}],
   "sections": {
     "summary": "One line describing what this conversation is.",
-    "dict": "- **term** - agreed meaning.",
+    "glossary": "- **term** - agreed meaning.",
     "qa": "- **Q:** question? **A:** answer.\n- **Q (open):** unresolved question?",
     "sources": "- file: path/to/file\n- skill: relay",
     "insights": "- Useful realization.",
@@ -74,7 +74,9 @@ Use this for `relay:save`, `relay:park`, auto-save reminders, and natural-langua
 }
 ```
 
-`summary`, `dict`, and `qa` are mandatory (upsert fails without them). `resume`,
+`dict` is a deprecated input alias, accepted forever, never emitted.
+
+`summary`, `glossary`, and `qa` are mandatory (upsert fails without them). `resume`,
 `user_instructions`, and `condensed_transcript` are structured JSON keys that always
 render as sections — omit them and they render `(none)`, so never fabricate content to
 fill them. `environment` and `artifacts` are optional and reference-only. Transcript

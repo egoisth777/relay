@@ -662,7 +662,7 @@ def conversation_payload(i: int, *, ref_previous: bool = False, topic: str | Non
         "tags": ["profiler", "synthetic"],
         "sections": {
             "summary": f"synthetic profiler summary {i}",
-            "dict": "- **profiler** - synthetic measurement record",
+            "glossary": "- **profiler** - synthetic measurement record",
             "qa": "- **Q:** What is this? **A:** A profiling fixture.",
             "decisions": "1. Use temporary roots only.",
         },
@@ -672,7 +672,7 @@ def conversation_payload(i: int, *, ref_previous: bool = False, topic: str | Non
             "open_questions": [],
             "suggested_skills": ["relay:save"],
         },
-        "user_instructions": ["do not mutate the real conversation database"],
+        "user_instructions": ["do not mutate the real Relay archive"],
         "condensed_transcript": [
             {"u": "profile this", "a": "created temporary synthetic data"}
         ],

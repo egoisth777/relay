@@ -20,9 +20,9 @@ root) is `~/.relay/` by default. The Relay archive,
 - Use TOML frontmatter delimited by `+++`: id, topic, status, tags, refs, created,
   and updated.
 - Every record is a resumption point. Required sections are `## summary`,
-  `## dict`, and `## qa`; `## resume`, `## user-instructions`, and
+  `## glossary`, and `## qa`; `## resume`, `## user-instructions`, and
   `## condensed-transcript` are always present.
-- Reconstruct language first: read `## dict` before instructions, questions, sources,
+- Reconstruct language first: read `## glossary` before instructions, questions, sources,
   insights, or decisions.
 - Keep directional refs bidirectional: `spawned-from`/`spawned-to`,
   `continued-from`/`continued-as`, and `informed-by`/`informed`.

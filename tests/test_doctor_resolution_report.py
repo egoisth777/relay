@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -32,6 +33,36 @@ an old record with no resumption sections
 """
 
 
+LEGACY_FIDELITY_RECORD = """+++
+id = "conv_260102_legacy-fidelity"
+topic = "legacy fidelity"
+status = "active"
+tags = []
+refs = []
+created = "2026-01-02T00:00:00Z"
+updated = "2026-01-02T00:00:00Z"
++++
+## summary
+legacy summary
+
+## dict
+- **legacy** - meaning
+
+## qa
+- **Q:** q? **A:** a.
+
+## resume
+- goal: continue legacy work
+
+## user-instructions
+- retain compatibility
+
+## condensed-transcript
+(none)
+
+"""
+
+
 def record_text(cid: str, topic: str, body: str, refs: str = "refs = []") -> str:
     return f"""+++
 id = "{cid}"
@@ -55,20 +86,68 @@ class DoctorResolutionReportTest(unittest.TestCase):
         self.root = self.home / ".relay"
         self.addCleanup(self._tmp.cleanup)
 
+    def env_with_tools(self, *names: str, **overrides: object) -> dict[str, str]:
+        tools = self.tmp / "tools"
+        tools.mkdir(exist_ok=True)
+        extension = ".exe" if os.name == "nt" else ""
+        for name in names:
+            shim = tools / f"{name}{extension}"
+            if os.name == "nt":
+                shutil.copy2(sys.executable, shim)
+            else:
+                shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                shim.chmod(0o755)
+        return clean_env(home=self.home, PATH=tools, **overrides)
+
     def test_reports_default_global_paths(self) -> None:
         proc = run_cli(["doctor"], cwd=self.tmp, env=self.env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = load_json(proc)
 
         self.assertEqual(Path(out["plugin_installation_root"]), self.root)
-        self.assertEqual(Path(out["conversation_database"]), self.root / "convs")
+        self.assertEqual(Path(out["relay_archive"]), self.root / "convs")
+        self.assertEqual(out["conversation_database"], out["relay_archive"])
         self.assertEqual(out["resolution"]["layer"], "default-global")
         self.assertFalse(out["resolution"]["compatibility"])
         self.assertNotIn("conv_root", out)
         aliases = out["deprecated"]["aliases"]
         self.assertEqual(Path(aliases["conv_root"]), self.root)
         self.assertEqual(Path(aliases["convs"]), self.root / "convs")
+        self.assertEqual(aliases["conversation_database"], out["relay_archive"])
         self.assertEqual(out["records"], 0)
+
+    def test_semantic_search_reports_uvx_only_with_canonical_opt_in(self) -> None:
+        enabled = run_cli(
+            ["doctor"],
+            cwd=self.tmp,
+            env=self.env_with_tools("uvx", RELAY_USE_UVX_SEMBLE="1"),
+        )
+        self.assertEqual(enabled.returncode, 0, enabled.stderr)
+        out = load_json(enabled)
+        self.assertFalse(out["tools"]["semble"])
+        self.assertTrue(out["tools"]["uvx"])
+        self.assertEqual(out["semantic_search"], "uvx semble (set RELAY_USE_UVX_SEMBLE=1)")
+
+    def test_semantic_search_ignores_legacy_uvx_opt_in(self) -> None:
+        ignored = run_cli(
+            ["doctor"],
+            cwd=self.tmp,
+            env=self.env_with_tools("uvx", CONV_USE_UVX_SEMBLE="1"),
+        )
+        self.assertEqual(ignored.returncode, 0, ignored.stderr)
+        out = load_json(ignored)
+        self.assertFalse(out["tools"]["semble"])
+        self.assertTrue(out["tools"]["uvx"])
+        self.assertEqual(out["semantic_search"], "body fallback")
+
+    def test_semantic_search_prefers_installed_semble(self) -> None:
+        proc = run_cli(
+            ["doctor"],
+            cwd=self.tmp,
+            env=self.env_with_tools("semble", "uvx", RELAY_USE_UVX_SEMBLE="1"),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(load_json(proc)["semantic_search"], "semble")
 
     def test_reports_explicit_compatibility_root(self) -> None:
         root = self.tmp / "compat-root"
@@ -77,7 +156,8 @@ class DoctorResolutionReportTest(unittest.TestCase):
         out = load_json(proc)
 
         self.assertEqual(Path(out["plugin_installation_root"]), root)
-        self.assertEqual(Path(out["conversation_database"]), root / "convs")
+        self.assertEqual(Path(out["relay_archive"]), root / "convs")
+        self.assertEqual(out["conversation_database"], out["relay_archive"])
         self.assertEqual(out["resolution"]["layer"], "compat-flag")
         self.assertTrue(out["resolution"]["compatibility"])
 
@@ -88,7 +168,8 @@ class DoctorResolutionReportTest(unittest.TestCase):
         out = load_json(proc)
 
         self.assertEqual(Path(out["plugin_installation_root"]), root)
-        self.assertEqual(Path(out["conversation_database"]), root / "convs")
+        self.assertEqual(Path(out["relay_archive"]), root / "convs")
+        self.assertEqual(out["conversation_database"], out["relay_archive"])
         self.assertEqual(out["resolution"]["layer"], "compat-flag")
         self.assertTrue(out["resolution"]["compatibility"])
 
@@ -116,6 +197,125 @@ class DoctorResolutionReportTest(unittest.TestCase):
             {"resume", "user-instructions", "condensed-transcript"},
         )
 
+    def test_legacy_dict_counts_as_glossary_for_fidelity(self) -> None:
+        self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
+        path = self.root / "convs" / "2026-01-02_legacy-fidelity.md"
+        path.write_text(LEGACY_FIDELITY_RECORD, encoding="utf-8")
+
+        proc = run_cli(["doctor"], cwd=self.tmp, env=self.env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = load_json(proc)
+        self.assertEqual(out["parse_errors"], [])
+        fidelity = [warning for warning in out["warnings"] if "fidelity" in warning]
+        self.assertEqual(fidelity, [], out["warnings"])
+
+    def test_doctor_warns_and_fix_preserves_conflicting_dict_and_glossary(self) -> None:
+        self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
+        path = self.root / "convs" / "2026-01-04_conflicting-sections.md"
+        path.write_text(
+            record_text(
+                "conv_260104_conflicting-sections",
+                "conflicting sections",
+                """## summary
+summary
+
+## dict
+- **old** - meaning
+
+## glossary
+- **new** - meaning
+
+## qa
+- **Q:** q? **A:** a.
+""",
+            ),
+            encoding="utf-8",
+        )
+        before = path.read_bytes()
+
+        doctor = run_cli(["doctor"], cwd=self.tmp, env=self.env)
+        self.assertEqual(doctor.returncode, 0, doctor.stderr)
+        out = load_json(doctor)
+
+        warnings = [
+            warning
+            for warning in out["warnings"]
+            if path.name in json.dumps(warning)
+            and warning.get("conflicting_sections") == ["dict", "glossary"]
+        ]
+        self.assertEqual(out["parse_errors"], [])
+        self.assertEqual(out["records"], 1)
+        self.assertFalse(
+            any(path.name in json.dumps(warning) and "fidelity" in warning for warning in out["warnings"])
+        )
+        self.assertEqual(len(warnings), 1, out["warnings"])
+
+        fixed = run_cli(["doctor", "--fix"], cwd=self.tmp, env=self.env)
+        self.assertEqual(fixed.returncode, 0, fixed.stderr)
+        fixed_out = load_json(fixed)
+        fixed_warnings = [
+            warning
+            for warning in fixed_out["warnings"]
+            if path.name in json.dumps(warning)
+            and warning.get("conflicting_sections") == ["dict", "glossary"]
+        ]
+        self.assertEqual(fixed_out["parse_errors"], [])
+        self.assertEqual(fixed_out["records"], 1)
+        self.assertFalse(
+            any(path.name in json.dumps(warning) and "fidelity" in warning for warning in fixed_out["warnings"])
+        )
+        self.assertEqual(len(fixed_warnings), 1, fixed_out["warnings"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertNotIn("convs/2026-01-04_conflicting-sections.md", fixed_out["fix"]["canonical_records"])
+
+    def test_doctor_fix_coalesces_identical_dict_and_glossary(self) -> None:
+        self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
+        path = self.root / "convs" / "2026-01-05_identical-sections.md"
+        path.write_text(
+            record_text(
+                "conv_260105_identical-sections",
+                "identical sections",
+                """## summary
+summary
+
+## dict
+- **same** - meaning
+
+## glossary
+  - **same** - meaning
+
+## qa
+- **Q:** q? **A:** a.
+""",
+            ),
+            encoding="utf-8",
+        )
+
+        fixed = run_cli(["doctor", "--fix"], cwd=self.tmp, env=self.env)
+        self.assertEqual(fixed.returncode, 0, fixed.stderr)
+        out = load_json(fixed)
+        self.assertIn("convs/2026-01-05_identical-sections.md", out["fix"]["canonical_records"])
+        markdown = path.read_text(encoding="utf-8")
+        self.assertNotIn("## dict", markdown)
+        self.assertEqual(markdown.count("## glossary"), 1)
+
+    def test_fix_canonicalizes_legacy_dict_to_glossary(self) -> None:
+        self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
+        path = self.root / "convs" / "2026-01-03_legacy-dict.md"
+        path.write_text(LEGACY_RECORD, encoding="utf-8")
+
+        proc = run_cli(["doctor", "--fix"], cwd=self.tmp, env=self.env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = load_json(proc)
+        self.assertIn("convs/2026-01-03_legacy-dict.md", out["fix"]["canonical_records"])
+
+        markdown = path.read_text(encoding="utf-8")
+        self.assertNotIn("## dict", markdown)
+        self.assertIn("## glossary", markdown)
+        headers = ["## summary", "## glossary", "## qa", "## resume", "## user-instructions", "## condensed-transcript"]
+        positions = [markdown.index(header) for header in headers]
+        self.assertEqual(positions, sorted(positions), markdown)
+
     def test_fix_repairs_lifecycle_artifacts_and_remains_idempotent(self) -> None:
         self.assertEqual(run_cli(["init"], cwd=self.tmp, env=self.env).returncode, 0)
         (self.root / ".gitignore").write_text("old-cache/\n", encoding="utf-8")
@@ -129,7 +329,7 @@ class DoctorResolutionReportTest(unittest.TestCase):
 ## summary
 s
 
-## dict
+## glossary
 - **p** - parent
 """,
         )
@@ -148,7 +348,7 @@ s
 ## alpha
 a
 
-## dict
+## glossary
 - **c** - child
 """,
             refs='refs = [{ id = "conv_260101_parent", rel = "spawned-from" }]',
@@ -175,7 +375,7 @@ a
         self.assertEqual((self.root / ".gitignore").read_text(encoding="utf-8"), ".semble/\nindex.jsonl\n__pycache__/\n")
 
         child_md = (self.root / "convs" / "2026-01-01_child.md").read_text(encoding="utf-8")
-        positions = [child_md.index(name) for name in ("## summary", "## dict", "## qa", "## resume", "## alpha", "## zebra")]
+        positions = [child_md.index(name) for name in ("## summary", "## glossary", "## qa", "## resume", "## alpha", "## zebra")]
         self.assertEqual(positions, sorted(positions), child_md)
         parent_md = (self.root / "convs" / "2026-01-01_parent.md").read_text(encoding="utf-8")
         self.assertIn('rel = "spawned-to"', parent_md)
@@ -198,7 +398,7 @@ a
             """## summary
 first summary
 
-## dict
+## glossary
 - **x** - y
 
 ## summary
@@ -229,7 +429,7 @@ second summary
                 """## summary
 fresh summary
 
-## dict
+## glossary
 - **x** - y
 
 ## qa

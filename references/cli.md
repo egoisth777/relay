@@ -70,6 +70,17 @@ Relay archive, and whether an explicit compatibility override was used.
   optional tools, list parse errors, and WARN about records missing the resumption
   sections. With `--fix`, repair layout, `.gitignore`, refs, index, missing recovery
   sections, and canonical record rendering; malformed records remain report-only.
+  Stored records with differing `## dict` + `## glossary` content produce a per-record
+  doctor warning; `doctor --fix` refuses to rewrite that record. Context, branch, and
+  return fail with `conflicting sections: dict and glossary`.
+
+## Context Pack
+
+`context` text begins with the `relay context pack v2` banner. Its fixed sections are
+`summary, glossary, user-instructions, resume, qa`; optional sections are
+`decisions, environment, artifacts, sources, insights` when present and nonempty. These
+are followed by transcript, linked-context, action argv, and the truncated flag. JSON
+output uses `schema_version: 2` and lists the delivered sections.
 
 ## Turn Counter Hook
 
@@ -107,7 +118,7 @@ path is available, the CLI falls back to local body scoring and labels those hit
   "refs": [{"id": "conv_260615_parent", "rel": "spawned-from"}],
   "sections": {
     "summary": "required",
-    "dict": "- **term** - meaning",
+    "glossary": "- **term** - meaning",
     "qa": "- **Q:** question? **A:** answer.",
     "sources": "optional", "insights": "optional", "decisions": "optional"
   },
@@ -128,12 +139,16 @@ path is available, the CLI falls back to local body scoring and labels those hit
 }
 ```
 
-- `summary`, `dict`, and `qa` are mandatory; upsert fails without them.
+- `summary`, `glossary`, and `qa` are mandatory; upsert fails without them.
+  The `dict` key or heading is a deprecated input alias for `glossary`, accepted forever
+  and never emitted. If both `dict` and `glossary` are present, identical trimmed content
+  coalesces silently; differing content fails validation with an error naming both as
+  conflicting.
 - `resume` (object), `user_instructions` (list or string), and `condensed_transcript`
   (list of `{u, a, w}` objects and/or strings) are structured JSON keys rendered into the
   always-present `## resume`, `## user-instructions`, and `## condensed-transcript`
   sections. When empty they render `(none)`.
-- Section render order is fixed: mandatory sections `summary, dict, qa`, then optional
+- Section render order is fixed: mandatory sections `summary, glossary, qa`, then optional
   informational sections `sources, insights, decisions, environment, artifacts, digest`, then always-present
   recovery sections `resume, user-instructions, condensed-transcript`, then any extra
   sections alphabetically. The same order is used for structured `sections` input and
@@ -152,7 +167,7 @@ The branch commands are deterministic wrappers around the same record write path
   `spawned-to` reverse ref in the same transaction. The parent is parked unless
   `--keep-parent-active` is set.
 - `continue` creates an active child with `continued-from`, parks the parent after
-  successful child creation, and carries forward the parent's dict, resume, qa, sources,
+  successful child creation, and carries forward the parent's glossary, resume, qa, sources,
   insights, decisions, environment, checkpoints, instructions, and weighted transcript
   markers when present. Artifacts are deliberately branch-local and are not inherited.
 - `return` requires an explicit digest string, renders it as `## digest`, closes the
