@@ -30,7 +30,7 @@ def body(cid: str, topic: str, refs: list[dict[str, str]] | None = None) -> str:
             "refs": refs or [],
             "sections": {
                 "summary": f"{topic} summary",
-                "dict": "- **trace** - deterministic I/O event",
+                "glossary": "- **trace** - deterministic I/O event",
                 "qa": "- **Q:** traced? **A:** yes.",
             },
         }

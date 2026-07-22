@@ -15,9 +15,9 @@ the Plugin installation root is `~/.relay/`, and its Relay archive at
 - Treat `~/.relay/convs/*.md` as the source of truth and
   `~/.relay/index.jsonl` as a rebuildable cache.
 - Keep TOML frontmatter thin: id, topic, status, tags, refs, created, and updated.
-- Every record must support cold resumption: required sections are `summary`, `dict`,
+- Every record must support cold resumption: required sections are `summary`, `glossary`,
   and `qa`; `resume`, `user-instructions`, and `condensed-transcript` are always on.
-- Read `## dict` first so the next session adopts established language before acting.
+- Read `## glossary` first so the next session adopts established language before acting.
 - Keep `spawned-from`/`spawned-to`, `continued-from`/`continued-as`, and
   `informed-by`/`informed` refs bidirectional.
 - Do not rewrite decisions without explicit user approval. Redact secrets and PII;

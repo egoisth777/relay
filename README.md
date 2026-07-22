@@ -150,7 +150,7 @@ Records are Markdown with thin TOML frontmatter (`id`, `topic`, `status`, `tags`
 `refs`, `created`, `updated`) followed by ordered sections:
 
 - `## summary` — one-line orientation
-- `## dict` — agreed or coined language
+- `## glossary` — agreed or coined language
 - `## qa` — the question-and-answer spine; `Q (open)` marks live threads
 - `## resume` — goal, completed checkpoints, next steps, open questions, suggested skills
 - `## user-instructions` — standing directives for the next session
@@ -159,7 +159,7 @@ Records are Markdown with thin TOML frontmatter (`id`, `topic`, `status`, `tags`
 - `## condensed-transcript` — compressed chronology with durable weights 1–3
 - `## sources`, `## insights`, `## decisions`, `## digest` — optional evidence
 
-`summary`, `dict`, and `qa` are required. The three handoff sections always exist;
+`summary`, `glossary`, and `qa` are required. The three handoff sections always exist;
 empty sections render as `(none)`.
 
 ## Performance and recovery

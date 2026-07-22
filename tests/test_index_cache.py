@@ -34,7 +34,7 @@ def payload(cid: str, topic: str, *, refs: list[dict[str, str]] | None = None) -
             "updated": NOW,
             "sections": {
                 "summary": f"{topic} summary",
-                "dict": f"- **{topic.split()[0]}** - deterministic fixture",
+                "glossary": f"- **{topic.split()[0]}** - deterministic fixture",
                 "qa": "- **Q:** stable? **A:** yes.",
             },
             "resume": {

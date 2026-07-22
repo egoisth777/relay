@@ -22,7 +22,7 @@ def base_payload(cid: str, topic: str) -> dict:
         "updated": NOW,
         "sections": {
             "summary": f"{topic} summary",
-            "dict": "- **context pack** - reconstruction-ordered Relay output",
+            "glossary": "- **context pack** - reconstruction-ordered Relay output",
             "qa": "- **Q (open):** complete? **A:** continue from the pack.",
             "decisions": "- preserve deterministic fidelity",
         },
@@ -89,6 +89,74 @@ def section_map(pack: dict) -> dict[str, str]:
     return {section["name"]: section["markdown"] for section in pack["sections"]}
 
 
+def assert_optional_budget_ladder(
+    root: Path,
+    env: dict[str, str],
+    cwd: Path,
+    record_id: str,
+    expected_transcript: str | None,
+) -> None:
+    full_proc = run_cli(
+        ["context", record_id, "--json", "--no-refs", "--relay-root", root],
+        cwd=cwd,
+        env=env,
+    )
+    assert full_proc.returncode == 0, full_proc.stderr
+    full = load_json(full_proc)
+    optional = ["decisions", "environment", "artifacts", "sources", "insights"]
+    fixed = ["summary", "glossary", "user-instructions", "resume", "qa"]
+    expected_full = [*fixed, *optional]
+    if expected_transcript is not None:
+        expected_full.append("condensed-transcript")
+    assert [section["name"] for section in full["sections"]] == expected_full
+
+    def pack_at(budget: int) -> dict:
+        proc = run_cli(
+            [
+                "context",
+                record_id,
+                "--json",
+                "--no-refs",
+                "--budget-tokens",
+                budget,
+                "--relay-root",
+                root,
+            ],
+            cwd=cwd,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return load_json(proc)
+
+    def highest_budget_with_prefix_removed(prefix: list[str]) -> dict:
+        low = full["minimum_tokens"]
+        high = full["estimated_tokens"] - 1
+        found: int | None = None
+        while low <= high:
+            budget = (low + high) // 2
+            pack = pack_at(budget)
+            names = {section["name"] for section in pack["sections"]}
+            missing = [name for name in optional if name not in names]
+            if all(name in missing for name in prefix):
+                found = budget
+                low = budget + 1
+            else:
+                high = budget - 1
+        assert found is not None, prefix
+        return pack_at(found)
+
+    for count in range(1, len(optional) + 1):
+        pack = highest_budget_with_prefix_removed(optional[-count:])
+        names = [section["name"] for section in pack["sections"]]
+        expected = [*fixed, *optional[: len(optional) - count]]
+        if expected_transcript is not None:
+            expected.append("condensed-transcript")
+        assert pack["truncated"] is True
+        assert names == expected
+        if expected_transcript is not None:
+            assert section_map(pack)["condensed-transcript"] == expected_transcript
+
+
 def test_structured_fidelity_fields_are_durable_and_canonical(tmp_path: Path) -> None:
     root, env = setup_context_graph(tmp_path)
     shown = run_cli(["show", PARENT, "--markdown", "--relay-root", root], cwd=tmp_path, env=env)
@@ -97,7 +165,7 @@ def test_structured_fidelity_fields_are_durable_and_canonical(tmp_path: Path) ->
 
     headers = [
         "## summary",
-        "## dict",
+        "## glossary",
         "## qa",
         "## decisions",
         "## environment",
@@ -195,9 +263,93 @@ legacy marker summary
     assert imported.returncode == 0, imported.stderr
     packed = run_cli(["context", legacy_id, "--json", "--relay-root", root], cwd=tmp_path, env=env)
     assert packed.returncode == 0, packed.stderr
-    transcript = section_map(load_json(packed))["condensed-transcript"]
+    packed_json = load_json(packed)
+    names = [section["name"] for section in packed_json["sections"]]
+    assert "glossary" in names
+    assert "dict" not in names
+    assert section_map(packed_json)["glossary"] == "- **legacy** - marker text predates schema 2"
+    transcript = section_map(packed_json)["condensed-transcript"]
     assert "<!-- relay:transcript-weight=3 -->" in transcript
     assert "this marker-looking line is literal" in transcript
+    assert "(none)" not in section_map(packed_json)["glossary"]
+
+
+def test_dict_glossary_conflict_rejects_and_identical_content_coalesces(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    root = home / ".relay"
+    env = clean_env(home=home, RELAY_TEST_MODE="1", RELAY_TEST_NOW=NOW)
+    assert run_cli(["init", "--relay-root", root], cwd=tmp_path, env=env).returncode == 0
+    convs = root / "convs"
+
+    conflicting_id = "conv_260126_conflicting-sections"
+    (convs / "2026-01-26_conflicting-sections.md").write_text(
+        f"""+++
+id = "{conflicting_id}"
+topic = "conflicting sections"
+status = "active"
+tags = []
+refs = []
+created = "{NOW}"
+updated = "{NOW}"
++++
+## summary
+summary
+
+## dict
+- **old** - meaning
+
+## glossary
+- **new** - meaning
+
+## qa
+- **Q:** q? **A:** a.
+""",
+        encoding="utf-8",
+    )
+    conflict = run_cli(
+        ["context", conflicting_id, "--json", "--relay-root", root],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert conflict.returncode == 2
+    assert "conflicting sections: dict and glossary" in conflict.stderr
+
+    identical_id = "conv_260127_identical-sections"
+    (convs / "2026-01-27_identical-sections.md").write_text(
+        f"""+++
+id = "{identical_id}"
+topic = "identical sections"
+status = "active"
+tags = []
+refs = []
+created = "{NOW}"
+updated = "{NOW}"
++++
+## summary
+summary
+
+## dict
+- **same** - meaning
+
+## glossary
+  - **same** - meaning
+
+## qa
+- **Q:** q? **A:** a.
+""",
+        encoding="utf-8",
+    )
+    identical = run_cli(
+        ["context", identical_id, "--json", "--relay-root", root],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert identical.returncode == 0, identical.stderr
+    pack = load_json(identical)
+    names = [section["name"] for section in pack["sections"]]
+    assert names.count("glossary") == 1
+    assert "dict" not in names
+    assert section_map(pack)["glossary"] == "- **same** - meaning"
 
 
 def test_invalid_transcript_weights_reject_before_writing(tmp_path: Path) -> None:
@@ -226,7 +378,7 @@ def test_context_text_and_json_have_reconstruction_order_and_one_hop_digest(tmp_
     assert json_proc.returncode == 0, json_proc.stderr
     pack = load_json(json_proc)
 
-    assert pack["schema_version"] == 1
+    assert pack["schema_version"] == 2
     assert pack["id"] == PARENT
     assert Path(pack["plugin_installation_root"]) == root
     assert pack["budget_tokens"] is None
@@ -234,7 +386,7 @@ def test_context_text_and_json_have_reconstruction_order_and_one_hop_digest(tmp_
     assert pack["estimated_tokens"] >= pack["minimum_tokens"] > 0
     assert [section["name"] for section in pack["sections"]] == [
         "summary",
-        "dict",
+        "glossary",
         "user-instructions",
         "resume",
         "qa",
@@ -258,9 +410,10 @@ def test_context_text_and_json_have_reconstruction_order_and_one_hop_digest(tmp_
     text_proc = context(root, env, tmp_path)
     assert text_proc.returncode == 0, text_proc.stderr
     text = text_proc.stdout
+    assert text.startswith("relay context pack v2\n")
     ordered = [
         "## summary",
-        "## dict",
+        "## glossary",
         "## user-instructions",
         "## resume",
         "## qa",
@@ -318,6 +471,118 @@ def test_budget_trims_low_weight_first_and_enforces_exact_byte_cap(tmp_path: Pat
     assert len(text_proc.stdout.encode("utf-8")) <= 4 * budget
     assert text_proc.stdout.rstrip().endswith("truncated: yes")
 
+
+
+def test_context_delivers_nonempty_sources_and_insights_in_optional_order(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    root = home / ".relay"
+    env = clean_env(home=home, RELAY_TEST_MODE="1", RELAY_TEST_NOW=NOW)
+    assert run_cli(["init", "--relay-root", root], cwd=tmp_path, env=env).returncode == 0
+
+    full = base_payload("conv_260121_optional", "optional sections")
+    full["sections"].update(
+        {
+            "environment": "- platform: test",
+            "artifacts": "- artifact: fixture",
+            "sources": "- source: design note",
+            "insights": "- insight: preserve ordering",
+        }
+    )
+    empty = base_payload("conv_260122_empty", "empty sections")
+    empty["sections"]["sources"] = ""
+    empty["sections"]["insights"] = ""
+    absent = base_payload("conv_260123_absent", "absent sections")
+    for payload in (full, empty, absent):
+        created = run_cli(
+            ["upsert", "--stdin", "--relay-root", root],
+            cwd=tmp_path,
+            env=env,
+            input=json.dumps(payload),
+        )
+        assert created.returncode == 0, created.stderr
+
+    full_pack_proc = run_cli(
+        ["context", full["id"], "--json", "--no-refs", "--relay-root", root],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert full_pack_proc.returncode == 0, full_pack_proc.stderr
+    full_pack = load_json(full_pack_proc)
+    assert [section["name"] for section in full_pack["sections"]] == [
+        "summary",
+        "glossary",
+        "user-instructions",
+        "resume",
+        "qa",
+        "decisions",
+        "environment",
+        "artifacts",
+        "sources",
+        "insights",
+    ]
+    full_sections = section_map(full_pack)
+    assert full_sections["sources"] == "- source: design note"
+    assert full_sections["insights"] == "- insight: preserve ordering"
+
+    for payload in (empty, absent):
+        proc = run_cli(
+            ["context", payload["id"], "--json", "--no-refs", "--relay-root", root],
+            cwd=tmp_path,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stderr
+        names = [section["name"] for section in load_json(proc)["sections"]]
+        assert "sources" not in names
+        assert "insights" not in names
+
+
+def test_budget_cuts_optional_sections_in_reverse_emission_order(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    root = home / ".relay"
+    env = clean_env(home=home, RELAY_TEST_MODE="1", RELAY_TEST_NOW=NOW)
+    assert run_cli(["init", "--relay-root", root], cwd=tmp_path, env=env).returncode == 0
+
+    raw = base_payload("conv_260124_budget-options", "budget optional sections")
+    raw["sections"].update(
+        {
+            "environment": "- environment: " + "E" * 1200,
+            "artifacts": "- artifact: " + "A" * 1200,
+            "sources": "- source: " + "S" * 1200,
+            "insights": "- insight: " + "I" * 1200,
+        }
+    )
+    raw["condensed_transcript"] = [
+        {"u": "protected one " + "P" * 500, "a": "answer one", "w": 3},
+        {"u": "protected two " + "Q" * 500, "a": "answer two", "w": 3},
+        {"u": "protected three " + "R" * 500, "a": "answer three", "w": 3},
+    ]
+    created = run_cli(
+        ["upsert", "--stdin", "--relay-root", root],
+        cwd=tmp_path,
+        env=env,
+        input=json.dumps(raw),
+    )
+    assert created.returncode == 0, created.stderr
+
+    full_proc = run_cli(
+        ["context", raw["id"], "--json", "--no-refs", "--relay-root", root],
+        cwd=tmp_path,
+        env=env,
+    )
+    assert full_proc.returncode == 0, full_proc.stderr
+    full_transcript = section_map(load_json(full_proc))["condensed-transcript"]
+    assert_optional_budget_ladder(root, env, tmp_path, raw["id"], full_transcript)
+
+    no_transcript = base_payload("conv_260125_budget-no-transcript", "budget without transcript")
+    no_transcript["sections"].update(raw["sections"])
+    created = run_cli(
+        ["upsert", "--stdin", "--relay-root", root],
+        cwd=tmp_path,
+        env=env,
+        input=json.dumps(no_transcript),
+    )
+    assert created.returncode == 0, created.stderr
+    assert_optional_budget_ladder(root, env, tmp_path, no_transcript["id"], None)
 
 def test_missing_link_warning_is_an_optional_budget_unit(tmp_path: Path) -> None:
     home = tmp_path / "home"
@@ -409,7 +674,7 @@ def test_doctor_fidelity_warning_is_report_only_even_with_fix(tmp_path: Path) ->
     warnings = [warning for warning in load_json(doctor)["warnings"] if "fidelity" in warning]
     assert len(warnings) == 1
     assert warnings[0]["fidelity"] <= 2
-    missing_order = ["resume-goal", "next-step", "dict-entry", "user-instructions", "transcript-entries"]
+    missing_order = ["resume-goal", "next-step", "glossary-entry", "user-instructions", "transcript-entries"]
     assert warnings[0]["missing"] == [item for item in missing_order if item in warnings[0]["missing"]]
 
     fixed = run_cli(["doctor", "--fix", "--relay-root", root], cwd=tmp_path, env=env)

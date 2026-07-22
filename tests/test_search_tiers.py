@@ -23,7 +23,7 @@ def payload(cid: str, topic: str, *, marker: str, tags: list[str] | None = None)
             "updated": NOW,
             "sections": {
                 "summary": marker,
-                "dict": "- **search** - compatibility cascade",
+                "glossary": "- **search** - compatibility cascade",
                 "qa": "- **Q:** deterministic? **A:** yes.",
             },
         }

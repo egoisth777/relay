@@ -18,7 +18,7 @@ PARENT_PAYLOAD = {
     "tags": ["branch"],
     "sections": {
         "summary": "parent summary",
-        "dict": "- **parent** - meaning",
+        "glossary": "- **parent** - meaning",
         "qa": "- **Q:** settled? **A:** yes.",
         "sources": "- parent design doc\n- parent issue tracker",
         "insights": "- useful pattern",
@@ -36,7 +36,7 @@ def existing_child_payload(cid: str, summary: str) -> dict:
         "status": "active",
         "sections": {
             "summary": summary,
-            "dict": "- **child** - existing",
+            "glossary": "- **child** - existing",
             "qa": "- **Q:** keep? **A:** yes.",
         },
     }
@@ -65,6 +65,28 @@ class BranchPrimitivesTest(unittest.TestCase):
         proc = run_cli(["show", cid, "--markdown", "--relay-root", self.root], cwd=self.tmp)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
+    def _make_legacy_dict(self, cid: str) -> None:
+        shown = self._show(cid)
+        path = self.root / shown["file"]
+        body = path.read_text(encoding="utf-8")
+        self.assertIn("## glossary", body)
+        path.write_text(body.replace("## glossary", "## dict", 1), encoding="utf-8")
+
+    def _make_conflicting_sections(self, cid: str) -> Path:
+        shown = self._show(cid)
+        path = self.root / shown["file"]
+        body = path.read_text(encoding="utf-8")
+        self.assertIn("## glossary", body)
+        path.write_text(
+            body.replace(
+                "## glossary",
+                "## dict\n- **legacy** - conflicting meaning\n\n## glossary",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        return path
+
 
     def _upsert(self, payload: dict) -> None:
         proc = run_cli(
@@ -114,6 +136,49 @@ class BranchPrimitivesTest(unittest.TestCase):
         parent = self._show("conv_260101_parent")
         self.assertEqual(parent["status"], "active")
         self.assertIn({"id": "conv_260101_branch", "rel": "spawned-to"}, parent["refs"])
+
+    def test_sidekick_inherits_legacy_dict_as_glossary(self) -> None:
+        self._make_legacy_dict("conv_260101_parent")
+        proc = run_cli(
+            [
+                "sidekick",
+                "conv_260101_parent",
+                "legacy branch topic",
+                "--id",
+                "conv_260101_legacy-branch",
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_md = self._markdown("conv_260101_legacy-branch")
+        self.assertIn("## glossary", child_md)
+        self.assertIn("- **parent** - meaning", child_md)
+        self.assertNotIn("## dict", child_md)
+        glossary = child_md.split("## glossary\n", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("(none)", glossary)
+
+    def test_sidekick_rejects_conflicting_dict_and_glossary_without_child(self) -> None:
+        self._make_conflicting_sections("conv_260101_parent")
+        child_id = "conv_260101_conflict-sidekick"
+        proc = run_cli(
+            [
+                "sidekick",
+                "conv_260101_parent",
+                "conflicting branch topic",
+                "--id",
+                child_id,
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("conflicting sections: dict and glossary", proc.stderr)
+        listed = run_cli(["list", "--json", "--relay-root", self.root], cwd=self.tmp)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertNotIn(child_id, {record["id"] for record in load_json(listed)})
 
     def test_sidekick_id_collision_preserves_existing_child_and_parent(self) -> None:
         self._upsert(existing_child_payload("conv_260101_branch", "existing sidekick record"))
@@ -182,6 +247,51 @@ class BranchPrimitivesTest(unittest.TestCase):
         self.assertIn("- parent design doc", md)
         self.assertIn("- parent issue tracker", md)
 
+    def test_continue_inherits_legacy_dict_as_glossary(self) -> None:
+        self._make_legacy_dict("conv_260101_parent")
+        proc = run_cli(
+            [
+                "continue",
+                "conv_260101_parent",
+                "--topic",
+                "legacy continuation topic",
+                "--id",
+                "conv_260101_legacy-continued",
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        child_md = self._markdown("conv_260101_legacy-continued")
+        self.assertIn("## glossary", child_md)
+        self.assertIn("- **parent** - meaning", child_md)
+        self.assertNotIn("## dict", child_md)
+        glossary = child_md.split("## glossary\n", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("(none)", glossary)
+
+    def test_continue_rejects_conflicting_dict_and_glossary_without_child(self) -> None:
+        self._make_conflicting_sections("conv_260101_parent")
+        child_id = "conv_260101_conflict-continued"
+        proc = run_cli(
+            [
+                "continue",
+                "conv_260101_parent",
+                "--topic",
+                "conflicting continuation topic",
+                "--id",
+                child_id,
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("conflicting sections: dict and glossary", proc.stderr)
+        listed = run_cli(["list", "--json", "--relay-root", self.root], cwd=self.tmp)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertNotIn(child_id, {record["id"] for record in load_json(listed)})
+
     def test_continue_id_collision_preserves_existing_child_and_parent(self) -> None:
         self._upsert(existing_child_payload("conv_260101_continued", "existing continuation record"))
         proc = run_cli(
@@ -241,6 +351,73 @@ class BranchPrimitivesTest(unittest.TestCase):
         md = self._markdown("conv_260101_branch")
         self.assertIn("## digest\nExplored the branch and found the answer.", md)
 
+    def test_return_accepts_legacy_dict_branch(self) -> None:
+        created = run_cli(
+            [
+                "sidekick",
+                "conv_260101_parent",
+                "legacy return branch",
+                "--id",
+                "conv_260101_legacy-return",
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self._make_legacy_dict("conv_260101_legacy-return")
+        proc = run_cli(
+            [
+                "return",
+                "conv_260101_legacy-return",
+                "--digest",
+                "Legacy branch returned successfully.",
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = load_json(proc)
+        self.assertEqual(out["parent"], "conv_260101_parent")
+        self.assertTrue(out["digest_changed"])
+        branch = self._show("conv_260101_legacy-return")
+        self.assertEqual(branch["status"], "closed")
+        md = self._markdown("conv_260101_legacy-return")
+        self.assertIn("## glossary", md)
+        self.assertNotIn("## dict", md)
+
+    def test_return_rejects_conflicting_dict_and_glossary_without_writing(self) -> None:
+        created = run_cli(
+            [
+                "sidekick",
+                "conv_260101_parent",
+                "conflicting return branch",
+                "--id",
+                "conv_260101_conflict-return",
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        path = self._make_conflicting_sections("conv_260101_conflict-return")
+        before = path.read_bytes()
+        proc = run_cli(
+            [
+                "return",
+                "conv_260101_conflict-return",
+                "--digest",
+                "This conflicting return must not be written.",
+                "--relay-root",
+                self.root,
+            ],
+            cwd=self.tmp,
+        )
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("conflicting sections: dict and glossary", proc.stderr)
+        self.assertEqual(path.read_bytes(), before)
+
     def test_return_rejects_explicit_unrelated_parent_without_closing_branch(self) -> None:
         created = run_cli(
             [
@@ -262,7 +439,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "status": "active",
                 "sections": {
                     "summary": "unrelated",
-                    "dict": "- **other** - parent",
+                    "glossary": "- **other** - parent",
                     "qa": "- **Q:** related? **A:** no.",
                 },
             }
@@ -295,7 +472,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 "status": "active",
                 "sections": {
                     "summary": "second parent",
-                    "dict": "- **other** - parent",
+                    "glossary": "- **other** - parent",
                     "qa": "- **Q:** related? **A:** yes.",
                 },
             }
@@ -311,7 +488,7 @@ class BranchPrimitivesTest(unittest.TestCase):
                 ],
                 "sections": {
                     "summary": "branch summary",
-                    "dict": "- **branch** - ambiguous",
+                    "glossary": "- **branch** - ambiguous",
                     "qa": "- **Q:** close it? **A:** no.",
                 },
             }

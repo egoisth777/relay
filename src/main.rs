@@ -5,7 +5,7 @@ mod search_backend;
 use atomic_io::{
     lock_exclusive, lock_shared, remove_durable, write_atomic, ExclusiveLock, SharedLock,
 };
-use search_backend::{search_semble, tool_available};
+use search_backend::{search_semble, tool_available, use_uvx_semble};
 
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -23,11 +23,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::windows::fs::MetadataExt;
 
 const STATUSES: &[&str] = &["active", "parked", "closed"];
-const MANDATORY: &[&str] = &["summary", "dict", "qa"];
+const MANDATORY: &[&str] = &["summary", "glossary", "qa"];
 const ALWAYS: &[&str] = &["resume", "user-instructions", "condensed-transcript"];
 const ORDER: &[&str] = &[
     "summary",
-    "dict",
+    "glossary",
     "qa",
     "sources",
     "insights",
@@ -807,6 +807,29 @@ impl ScanEngine {
         Ok(parsed)
     }
 }
+fn normalize_section_map(
+    mut sections: BTreeMap<String, String>,
+    reject_conflict: bool,
+) -> Result<BTreeMap<String, String>, ConvError> {
+    let dict = sections.remove("dict");
+    let glossary = sections.remove("glossary");
+    match (dict, glossary) {
+        (Some(dict), Some(glossary)) => {
+            if dict.trim() != glossary.trim() && reject_conflict {
+                return Err(err("conflicting sections: dict and glossary"));
+            }
+            sections.insert("glossary".into(), glossary);
+        }
+        (Some(dict), None) => {
+            sections.insert("glossary".into(), dict);
+        }
+        (None, Some(glossary)) => {
+            sections.insert("glossary".into(), glossary);
+        }
+        (None, None) => {}
+    }
+    Ok(sections)
+}
 fn sections(body: &str) -> Result<BTreeMap<String, String>, ConvError> {
     let ms = section_headers(body);
     let mut out = BTreeMap::new();
@@ -823,9 +846,9 @@ fn sections(body: &str) -> Result<BTreeMap<String, String>, ConvError> {
         };
         out.insert(name, body[start..end].trim().to_string());
     }
-    Ok(out)
+    normalize_section_map(out, true)
 }
-fn sections_allow_dup(body: &str) -> BTreeMap<String, String> {
+fn sections_allow_dup(body: &str) -> Result<BTreeMap<String, String>, ConvError> {
     let ms = section_headers(body);
     let mut out = BTreeMap::new();
     for i in 0..ms.len() {
@@ -838,7 +861,7 @@ fn sections_allow_dup(body: &str) -> BTreeMap<String, String> {
         };
         out.insert(name, body[start..end].trim().to_string());
     }
-    out
+    normalize_section_map(out, true)
 }
 fn duplicates(body: &str) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -853,7 +876,10 @@ fn duplicates(body: &str) -> Vec<String> {
     v
 }
 fn count_open(body: &str) -> i64 {
-    let s = sections_allow_dup(body).remove("qa").unwrap_or_default();
+    let s = sections_allow_dup(body)
+        .ok()
+        .and_then(|mut sections| sections.remove("qa"))
+        .unwrap_or_default();
     s.lines().filter(|line| has_open_marker(line)).count() as i64
 }
 fn word_boundary(bytes: &[u8], index: usize) -> bool {
@@ -1069,10 +1095,9 @@ fn build_body(raw: &Map<String, Value>) -> Result<String, ConvError> {
     };
     for (k, v) in o {
         let s = norm_section(Some(v));
-        if !s.is_empty() {
-            sec.insert(k.trim().to_lowercase(), s);
-        }
+        sec.insert(k.trim().to_lowercase(), s);
     }
+    sec = normalize_section_map(sec, true)?;
     for name in ["environment", "artifacts"] {
         if let Some(value) = always.get(name) {
             sec.insert(name.into(), value.clone());
@@ -2742,7 +2767,7 @@ fn context_text(
     truncated: bool,
 ) -> String {
     let mut parts = vec![
-        "relay context pack v1".to_string(),
+        "relay context pack v2".to_string(),
         format!(
             "frontmatter: {}",
             serde_json::to_string(frontmatter).unwrap_or_default()
@@ -2818,7 +2843,8 @@ fn cmd_context(root: &Path, args: &[String]) -> Result<(), ConvError> {
     let as_json = args.iter().any(|arg| arg == "--json");
     let no_refs = args.iter().any(|arg| arg == "--no-refs");
     let owner = resolve(root, target)?;
-    let section_values = sections_allow_dup(&owner.body);
+    let section_values = sections_allow_dup(&owner.body)
+        .map_err(|error| err(format!("{}: {}", id(&owner), error)))?;
     let frontmatter = context_frontmatter(&owner)?;
     let action = vec![
         env::current_exe()?.to_string_lossy().to_string(),
@@ -2828,8 +2854,8 @@ fn cmd_context(root: &Path, args: &[String]) -> Result<(), ConvError> {
         "--relay-root".into(),
         root.to_string_lossy().to_string(),
     ];
-    let mandatory_names = ["summary", "dict", "user-instructions", "resume", "qa"];
-    let optional_names = ["decisions", "environment", "artifacts"];
+    let mandatory_names = ["summary", "glossary", "user-instructions", "resume", "qa"];
+    let optional_names = ["decisions", "environment", "artifacts", "sources", "insights"];
     let mandatory = mandatory_names
         .iter()
         .map(|name| {
@@ -2873,7 +2899,8 @@ fn cmd_context(root: &Path, args: &[String]) -> Result<(), ConvError> {
             if let Some(row) = by_id.get(&linked_id) {
                 match read_row_conv(root, row) {
                     Ok((linked, _)) => {
-                        let linked_sections = sections_allow_dup(&linked.body);
+                        let linked_sections = sections_allow_dup(&linked.body)
+                            .map_err(|error| err(format!("{}: {}", linked_id, error)))?;
                         let status = valstr(linked.meta.get("status"));
                         links.push(LinkedUnit {
                             id: linked_id,
@@ -2958,16 +2985,14 @@ fn cmd_context(root: &Path, args: &[String]) -> Result<(), ConvError> {
             }
             if !exchanges.is_empty() {
                 if exchanges.iter().all(|exchange| exchange.weight == 3) {
-                    if let Some(index) = optional.iter().position(|(name, _)| name == "artifacts") {
-                        optional.remove(index);
-                        continue;
-                    }
-                    if let Some(index) = optional.iter().position(|(name, _)| name == "environment")
+                    if let Some(name) = ["insights", "sources", "artifacts", "environment", "decisions"]
+                        .iter()
+                        .find(|name| optional.iter().any(|(section, _)| section == **name))
                     {
-                        optional.remove(index);
-                        continue;
-                    }
-                    if let Some(index) = optional.iter().position(|(name, _)| name == "decisions") {
+                        let index = optional
+                            .iter()
+                            .position(|(section, _)| section == *name)
+                            .unwrap();
                         optional.remove(index);
                         continue;
                     }
@@ -2981,15 +3006,14 @@ fn cmd_context(root: &Path, args: &[String]) -> Result<(), ConvError> {
                 exchanges.remove(drop_index);
                 continue;
             }
-            if let Some(index) = optional.iter().position(|(name, _)| name == "artifacts") {
-                optional.remove(index);
-                continue;
-            }
-            if let Some(index) = optional.iter().position(|(name, _)| name == "environment") {
-                optional.remove(index);
-                continue;
-            }
-            if let Some(index) = optional.iter().position(|(name, _)| name == "decisions") {
+            if let Some(name) = ["insights", "sources", "artifacts", "environment", "decisions"]
+                .iter()
+                .find(|name| optional.iter().any(|(section, _)| section == **name))
+            {
+                let index = optional
+                    .iter()
+                    .position(|(section, _)| section == *name)
+                    .unwrap();
                 optional.remove(index);
                 continue;
             }
@@ -3025,7 +3049,7 @@ fn cmd_context(root: &Path, args: &[String]) -> Result<(), ConvError> {
             })
             .collect::<Vec<_>>();
         output(&json!({
-            "schema_version":1,
+            "schema_version":2,
             "id":id(&owner),
             "plugin_installation_root":root,
             "budget_tokens":budget,
@@ -3193,8 +3217,9 @@ fn dispatch(root: &Path, cmd: &str, args: &[String], compat: bool) -> Result<(),
             ensure(root)?;
             write_gitignore(root)?;
             let r = rebuild(root, false)?;
+            let relay_archive = convs(root);
             output(
-                &json!({"plugin_installation_root":root,"conversation_database":convs(root),"deprecated":{"aliases":{"conv_root":root,"convs":convs(root)}},"index":index_path(root),"records":r.len()}),
+                &json!({"plugin_installation_root":root,"relay_archive":relay_archive,"conversation_database":relay_archive,"deprecated":{"aliases":{"conv_root":root,"convs":relay_archive,"conversation_database":relay_archive}},"index":index_path(root),"records":r.len()}),
             );
         }
         "rebuild-index" => {
@@ -3379,7 +3404,8 @@ fn cmd_branch(root: &Path, args: &[String], side: bool) -> Result<(), ConvError>
     } else {
         "continued-from"
     };
-    let ps = sections_allow_dup(&parent.body);
+    let ps = sections_allow_dup(&parent.body)
+        .map_err(|error| err(format!("{}: {}", id(&parent), error)))?;
     let qa = if side {
         "- **Q (open):** What should this sidekick resolve?\n  **A:** (none)".into()
     } else {
@@ -3396,8 +3422,8 @@ fn cmd_branch(root: &Path, args: &[String], side: bool) -> Result<(), ConvError>
         ),
     );
     sec.insert(
-        "dict".into(),
-        ps.get("dict").cloned().unwrap_or_else(|| NONE.into()),
+        "glossary".into(),
+        ps.get("glossary").cloned().unwrap_or_else(|| NONE.into()),
     );
     sec.insert("qa".into(), qa);
     sec.insert("resume".into(),ps.get("resume").cloned().unwrap_or_else(||format!("- goal: {}\n- next-steps:\n  - Capture progress and save the record\n- open-questions:\n  - {}\n- suggested-skills:\n  - relay:save",if side{format!("Explore {}",topic)}else{format!("Continue {}",valstr(parent.meta.get("topic")))},topic)));
@@ -3551,7 +3577,8 @@ fn cmd_return(root: &Path, args: &[String]) -> Result<(), ConvError> {
     if !state.rows.iter().any(|row| valstr(row.get("id")) == pid) {
         return Err(err(format!("branch parent not found: {}", pid)));
     };
-    let mut sec = sections_allow_dup(&branch.body);
+    let mut sec = sections_allow_dup(&branch.body)
+        .map_err(|error| err(format!("{}: {}", id(&branch), error)))?;
     for n in MANDATORY {
         if !sec.contains_key(*n) {
             return Err(err(format!(
@@ -3601,8 +3628,18 @@ fn cmd_list(root: &Path, args: &[String]) -> Result<(), ConvError> {
     if let Some(s) = st {
         r.retain(|v| valstr(v.get("status")) == s)
     }
-    r.sort_by_key(|v| valstr(v.get("updated")));
-    r.reverse();
+    r.sort_by(|left, right| {
+        let status_rank = |value: &Value| match valstr(value.get("status")).as_str() {
+            "active" => 0,
+            "parked" => 1,
+            "closed" => 2,
+            _ => 3,
+        };
+        status_rank(left)
+            .cmp(&status_rank(right))
+            .then_with(|| valstr(right.get("updated")).cmp(&valstr(left.get("updated"))))
+            .then_with(|| valstr(left.get("id")).cmp(&valstr(right.get("id"))))
+    });
     r.truncate(lim);
     if js {
         output(&Value::Array(r))
@@ -3818,14 +3855,14 @@ fn resume_group_has_item(markdown: &str, group: &str) -> bool {
 }
 
 fn fidelity_lint(conv: &Conv) -> Option<Value> {
-    let values = sections_allow_dup(&conv.body);
+    let values = sections_allow_dup(&conv.body).unwrap_or_default();
     let resume = values.get("resume").map(String::as_str).unwrap_or("");
     let has_goal = resume
         .lines()
         .find_map(|line| line.trim().strip_prefix("- goal:"))
         .is_some_and(|goal| !goal.trim().is_empty() && goal.trim() != NONE);
     let has_next = resume_group_has_item(resume, "next-steps");
-    let has_dict = values.get("dict").is_some_and(|markdown| {
+    let has_glossary = values.get("glossary").is_some_and(|markdown| {
         markdown.lines().any(|line| {
             let line = line.trim();
             line.starts_with("- ") && line.trim_start_matches("- ").trim() != NONE
@@ -3848,7 +3885,7 @@ fn fidelity_lint(conv: &Conv) -> Option<Value> {
     let checks = [
         ("resume-goal", has_goal),
         ("next-step", has_next),
-        ("dict-entry", has_dict),
+        ("glossary-entry", has_glossary),
         ("user-instructions", has_instructions),
         ("transcript-entries", transcript_count >= 3),
     ];
@@ -3901,7 +3938,7 @@ fn cmd_doctor(root: &Path, args: &[String], compat: bool) -> Result<(), ConvErro
     });
     let semantic_search = if semble_available {
         "semble"
-    } else if uvx_available && env::var("RELAY_USE_UVX_SEMBLE").as_deref() == Ok("1") {
+    } else if uvx_available && use_uvx_semble() {
         "uvx semble (set RELAY_USE_UVX_SEMBLE=1)"
     } else {
         "body fallback"
@@ -3930,24 +3967,31 @@ fn cmd_doctor(root: &Path, args: &[String], compat: bool) -> Result<(), ConvErro
                     .entry(id(&c))
                     .or_default()
                     .push(stat.relative.clone());
-                if fix && duplicates(&c.body).is_empty() {
-                    let ss = sections_allow_dup(&c.body);
-                    if MANDATORY.iter().all(|n| ss.contains_key(*n)) {
-                        let b = canonical(&ss, None);
-                        if c.body.trim_end() != b.trim_end() {
-                            let mut m = c.meta.clone();
-                            m.insert("updated".into(), json!(now_utc()));
-                            write_conv(&c.path, &m, &b)?;
-                            canonical_records.push(
-                                c.path
-                                    .strip_prefix(root)
-                                    .unwrap_or(&c.path)
-                                    .to_string_lossy()
-                                    .replace('\\', "/"),
-                            );
-                            c.meta = m;
-                            c.body = b;
-                        }
+                let ss = match sections_allow_dup(&c.body) {
+                    Ok(ss) => ss,
+                    Err(_) => {
+                        warn.push(json!({"file":p,"conflicting_sections":["dict","glossary"]}));
+                        records += 1;
+                        continue;
+                    }
+                };
+                if fix && duplicates(&c.body).is_empty()
+                    && MANDATORY.iter().all(|n| ss.contains_key(*n))
+                {
+                    let b = canonical(&ss, None);
+                    if c.body.trim_end() != b.trim_end() {
+                        let mut m = c.meta.clone();
+                        m.insert("updated".into(), json!(now_utc()));
+                        write_conv(&c.path, &m, &b)?;
+                        canonical_records.push(
+                            c.path
+                                .strip_prefix(root)
+                                .unwrap_or(&c.path)
+                                .to_string_lossy()
+                                .replace('\\', "/"),
+                        );
+                        c.meta = m;
+                        c.body = b;
                     }
                 }
                 records += 1;
@@ -3955,7 +3999,7 @@ fn cmd_doctor(root: &Path, args: &[String], compat: bool) -> Result<(), ConvErro
                 if !d.is_empty() {
                     warn.push(json!({"file":p,"duplicate_sections":d}))
                 }
-                let ss = sections_allow_dup(&c.body);
+                let ss = sections_allow_dup(&c.body).unwrap_or(ss);
                 let missing: Vec<_> = ALWAYS
                     .iter()
                     .filter(|n| !ss.contains_key(**n))
@@ -3993,10 +4037,12 @@ fn cmd_doctor(root: &Path, args: &[String], compat: bool) -> Result<(), ConvErro
         }
     }
     let health = raw_index_health(root);
+    let relay_archive = convs(root);
     output(&json!({
         "plugin_installation_root": root,
-        "conversation_database": convs(root),
-        "deprecated": {"aliases": {"conv_root": root, "convs": convs(root)}},
+        "relay_archive": relay_archive,
+        "conversation_database": relay_archive,
+        "deprecated": {"aliases": {"conv_root": root, "convs": relay_archive, "conversation_database": relay_archive}},
         "resolution": {
             "layer": if compat {"compat-flag"} else {"default-global"},
             "compatibility": compat,

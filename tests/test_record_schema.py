@@ -1,6 +1,6 @@
 """Slice s-record-schema / ticket t-resumption-sections.
 
-Contract: every record is a resumption point. Beyond the mandatory summary/dict/qa, the
+Contract: every record is a resumption point. Beyond the mandatory summary/glossary/qa, the
 body ALWAYS carries `## resume`, `## user-instructions`, and `## condensed-transcript`,
 rendered from structured upsert input keys and placed in a fixed order. Empty fields
 render as `(none)` rather than hard-failing upsert. Legacy records that predate these
@@ -23,7 +23,7 @@ FULL_PAYLOAD = {
     "tags": ["schema"],
     "sections": {
         "summary": "one line summary",
-        "dict": "- **term** - meaning",
+        "glossary": "- **term** - meaning",
         "qa": "- **Q:** q? **A:** a.",
         "sources": "- source note",
         "insights": "- useful signal",
@@ -94,7 +94,7 @@ class RecordSchemaTest(unittest.TestCase):
         positions = _order(
             md,
             "## summary",
-            "## dict",
+            "## glossary",
             "## qa",
             "## sources",
             "## insights",
@@ -111,7 +111,7 @@ class RecordSchemaTest(unittest.TestCase):
             "topic": "unknown section order",
             "sections": {
                 "summary": "s",
-                "dict": "- **t** - m",
+                "glossary": "- **t** - m",
                 "qa": "- **Q:** q? **A:** a.",
                 "zebra": "z",
                 "alpha": "a",
@@ -121,7 +121,7 @@ class RecordSchemaTest(unittest.TestCase):
         positions = _order(
             md,
             "## summary",
-            "## dict",
+            "## glossary",
             "## qa",
             "## resume",
             "## user-instructions",
@@ -150,7 +150,7 @@ a
 ## decisions
 d
 
-## dict
+## glossary
 - **t** - m
 """,
             }
@@ -159,7 +159,7 @@ d
         positions = _order(
             md,
             "## summary",
-            "## dict",
+            "## glossary",
             "## qa",
             "## decisions",
             "## resume",
@@ -170,6 +170,91 @@ d
         )
         self.assertEqual(positions, sorted(positions), f"sections out of order:\n{md}")
 
+    def test_structured_legacy_dict_key_renders_canonical_glossary(self) -> None:
+        payload = {
+            "topic": "legacy structured glossary",
+            "sections": {
+                "summary": "s",
+                "dict": "- **legacy** - accepted",
+                "qa": "- **Q:** q? **A:** a.",
+            },
+        }
+        md = self._markdown(self._upsert(payload))
+        self.assertIn("## glossary", md)
+        self.assertNotIn("## dict", md)
+
+    def test_raw_legacy_dict_heading_renders_canonical_glossary(self) -> None:
+        cid = self._upsert(
+            {
+                "topic": "legacy raw glossary",
+                "body": """## summary
+s
+
+## dict
+- **legacy** - accepted
+
+## qa
+- **Q:** q? **A:** a.
+""",
+            }
+        )
+        md = self._markdown(cid)
+        self.assertIn("## glossary", md)
+        self.assertNotIn("## dict", md)
+
+    def test_identical_dict_and_glossary_coalesce_to_one_canonical_section(self) -> None:
+        cid = self._upsert(
+            {
+                "topic": "coalesced glossary",
+                "sections": {
+                    "summary": "s",
+                    "dict": "  - **same** - content  \n",
+                    "glossary": "- **same** - content",
+                    "qa": "- **Q:** q? **A:** a.",
+                },
+            }
+        )
+        md = self._markdown(cid)
+        self.assertEqual(md.count("## glossary"), 1, md)
+        self.assertNotIn("## dict", md)
+
+    def test_conflicting_dict_and_glossary_fail_like_missing_mandatory(self) -> None:
+        missing = run_cli(
+            ["upsert", "--stdin", "--relay-root", self.root],
+            cwd=self.tmp,
+            input=json.dumps(
+                {
+                    "topic": "missing glossary",
+                    "sections": {
+                        "summary": "s",
+                        "qa": "- **Q:** q? **A:** a.",
+                    },
+                }
+            ),
+        )
+        self.assertNotEqual(missing.returncode, 0, missing.stdout)
+
+        conflict = run_cli(
+            ["upsert", "--stdin", "--relay-root", self.root],
+            cwd=self.tmp,
+            input=json.dumps(
+                {
+                    "topic": "conflicting glossary",
+                    "sections": {
+                        "summary": "s",
+                        "dict": "- **one** - content",
+                        "glossary": "- **two** - content",
+                        "qa": "- **Q:** q? **A:** a.",
+                    },
+                }
+            ),
+        )
+        self.assertEqual(conflict.returncode, missing.returncode, conflict.stdout)
+        message = f"{conflict.stdout}\n{conflict.stderr}".lower()
+        self.assertIn("conflicting", message)
+        self.assertIn("dict", message)
+        self.assertIn("glossary", message)
+
     def test_raw_body_rejects_duplicate_sections_without_replacing_existing_record(self) -> None:
         cid = self._upsert(
             {
@@ -177,7 +262,7 @@ d
                 "topic": "duplicate raw",
                 "sections": {
                     "summary": "original summary",
-                    "dict": "- **t** - m",
+                    "glossary": "- **t** - m",
                     "qa": "- **Q:** q? **A:** a.",
                 },
             }
@@ -194,7 +279,7 @@ d
                     "body": """## summary
 new summary
 
-## dict
+## glossary
 - **t** - m
 
 ## summary
@@ -235,7 +320,7 @@ second summary must not replace data
                 "topic": "bare record",
                 "sections": {
                     "summary": "s",
-                    "dict": "- **t** - m",
+                    "glossary": "- **t** - m",
                     "qa": "- **Q:** q? **A:** a.",
                 },
             }

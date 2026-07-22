@@ -18,3 +18,12 @@ read-only import source and is never a runtime root.
 Public record frontmatter remains compatible. `relay_schema = 2` is additive and marks
 valid hidden transcript-weight metadata. `environment` and `artifacts` are Markdown
 sections, not embedded file contents.
+
+Rust `init`/`doctor` JSON and installer install/status lines expose the canonical
+`relay_archive` path. The identical `conversation_database` value is retained as an
+explicit deprecated compatibility alias; removing it requires a separate deprecation
+plan.
+Record sections use canonical `glossary` naming. `dict` is a deprecated compatibility
+alias accepted on input indefinitely because legacy import copies raw bytes and can
+reintroduce `## dict`; it is never emitted. Removing this alias requires a separate
+deprecation plan.
