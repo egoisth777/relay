@@ -90,9 +90,12 @@ fn run_semble(root: &Path, query: &str, limit: usize) -> Result<String, CommandE
     }
 }
 
-fn use_uvx_semble() -> bool {
-    env::var("RELAY_USE_UVX_SEMBLE").as_deref() == Ok("1")
-        || env::var("CONV_USE_UVX_SEMBLE").as_deref() == Ok("1")
+pub fn use_uvx_semble() -> bool {
+    uvx_semble_opted_in(env::var("RELAY_USE_UVX_SEMBLE").ok().as_deref())
+}
+
+fn uvx_semble_opted_in(value: Option<&str>) -> bool {
+    value == Some("1")
 }
 
 fn semble_args(root: &Path, query: &str, limit: usize) -> Vec<OsString> {
@@ -470,6 +473,15 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::io::Cursor;
+
+    #[test]
+    fn uvx_semble_opt_in_requires_canonical_exact_value() {
+        assert!(uvx_semble_opted_in(Some("1")));
+        assert!(!uvx_semble_opted_in(None));
+        assert!(!uvx_semble_opted_in(Some("0")));
+        assert!(!uvx_semble_opted_in(Some("true")));
+        assert!(!uvx_semble_opted_in(Some(" 1")));
+    }
 
     #[test]
     fn stdout_matches_paths_and_ranks_by_earliest_position() {

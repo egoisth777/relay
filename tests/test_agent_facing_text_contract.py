@@ -438,3 +438,23 @@ def test_conversation_database_is_not_named_as_the_root() -> None:
         text = text_for(path)
         for phrase in bad_phrasings:
             assert phrase not in text, f"{path.relative_to(ROOT)} calls the root the database"
+
+
+def test_archive_terminology_in_examples_and_profiler_docs() -> None:
+    paths = [
+        ROOT / "references/save.md",
+        ROOT / "tools/profiler/README.md",
+        ROOT / "tools/profiler/relay_loading_profiler.py",
+    ]
+    compatibility_words = ("legacy", "deprecated", "compatibility")
+    offenders = []
+    for path in paths:
+        for line_number, line in enumerate(text_for(path).splitlines(), start=1):
+            lowered = line.lower()
+            if "conversation database" in lowered and not any(
+                word in lowered for word in compatibility_words
+            ):
+                offenders.append(f"{path.relative_to(ROOT)}:{line_number}: conversation database")
+            if "conv-profile" in lowered:
+                offenders.append(f"{path.relative_to(ROOT)}:{line_number}: conv-profile")
+    assert not offenders, "non-canonical archive terminology:\n" + "\n".join(offenders)

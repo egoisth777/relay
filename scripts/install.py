@@ -134,8 +134,13 @@ class Ctx:
         return self.universal_root / HOOK_SOURCE_DIR
 
     @property
-    def conversation_database(self) -> Path:
+    def relay_archive(self) -> Path:
         return self.universal_root / "convs"
+
+    @property
+    def conversation_database(self) -> Path:
+        """Deprecated compatibility alias for relay_archive."""
+        return self.relay_archive
 
     @property
     def codex_config_surface(self) -> Path:
@@ -473,11 +478,11 @@ def copy_payload(ctx: Ctx) -> None:
     prune_stale_payload_files(ctx, expected_rels)
 
 
-# --------------------------------------------------------------- conversation database
+# --------------------------------------------------------------------- Relay archive
 
 def run_init(ctx: Ctx) -> None:
     root = ctx.universal_root
-    db = ctx.conversation_database
+    db = ctx.relay_archive
     if ctx.dry_run:
         emit(f"would ensure universal installation root: {root}")
         emit(f"would ensure canonical installed plugin root: {ctx.canonical_plugin}")
@@ -1231,7 +1236,7 @@ def do_uninstall(ctx: Ctx) -> int:
                       ctx.omp_hook_file, ctx, "omp")
     _unwire_json_hooks(ctx.codex_hooks_json, ctx, "codex", remove_empty_file=True)
     _unwire_json_hooks(ctx.claude_settings_json, ctx, "claude", remove_empty_file=False)
-    emit(f"left Relay archive untouched: {ctx.conversation_database}")
+    emit(f"left Relay archive untouched: {ctx.relay_archive}")
     return 0
 
 
@@ -1479,7 +1484,7 @@ def do_status(ctx: Ctx) -> int:
     canonical_plugin_owned = _plugin_is_ours(ctx.canonical_plugin)
     canonical_plugin_present = canonical_plugin_owned and not plugin_missing and not plugin_stale
     canonical_hooks_present = not hook_missing and not hook_stale
-    database_present = ctx.conversation_database.is_dir() and (root / "index.jsonl").exists()
+    database_present = ctx.relay_archive.is_dir() and (root / "index.jsonl").exists()
 
     emit(f"plugin_source = {ctx.source}")
     emit(f"universal_installation_root = {ctx.universal_root}")
@@ -1488,7 +1493,8 @@ def do_status(ctx: Ctx) -> int:
     emit(f"canonical_hook_root = {ctx.canonical_hooks}")
     emit(f"codex_config_surface = {ctx.codex_config_surface}")
     emit(f"claude_config_surface = {ctx.claude_config_surface}")
-    emit(f"conversation_database = {ctx.conversation_database}")
+    emit(f"relay_archive = {ctx.relay_archive}")
+    emit(f"conversation_database = {ctx.relay_archive}")
     emit(f"runtime files: {'present' if runtime_files_present else _artifact_state(payload_missing, payload_stale)}")
     _emit_artifact_problems("runtime files", payload_missing, payload_stale)
     emit(f"plugin files: {'present' if canonical_plugin_present else _artifact_state(plugin_missing, plugin_stale)}")
@@ -1799,7 +1805,8 @@ def main(argv=None) -> int:
         emit(f"canonical_hook_root = {ctx.canonical_hooks}")
         emit(f"codex_config_surface = {ctx.codex_config_surface}")
         emit(f"claude_config_surface = {ctx.claude_config_surface}")
-        emit(f"conversation_database = {ctx.conversation_database}")
+        emit(f"relay_archive = {ctx.relay_archive}")
+        emit(f"conversation_database = {ctx.relay_archive}")
         if ctx.dry_run:
             emit("dry-run: no changes will be made")
         if args.repair:

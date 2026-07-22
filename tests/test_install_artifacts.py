@@ -95,6 +95,7 @@ def test_install_creates_conversation_database_without_clobbering_existing_recor
 
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert (root / "convs").is_dir()
+    assert f"relay_archive = {(root / 'convs').resolve()}" in proc.stdout.splitlines()
     assert f"conversation_database = {(root / 'convs').resolve()}" in proc.stdout.splitlines()
     assert record.read_bytes() == before
     assert nested_record.read_bytes() == nested_before

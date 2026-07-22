@@ -47,7 +47,7 @@ An empty `--only` selection fails the gate.
 Write a report somewhere explicit:
 
 ```powershell
-python tools/profiler/relay_loading_profiler.py --gate --out $env:TEMP\conv-profile.json
+python tools/profiler/relay_loading_profiler.py --gate --out $env:TEMP\relay-profile.json
 ```
 
 Collect `cProfile` data for the skill loader, CLI help, and Codex hook:
@@ -59,7 +59,7 @@ python tools/profiler/relay_loading_profiler.py --profile
 Write `cProfile` data to an explicit directory:
 
 ```powershell
-python tools/profiler/relay_loading_profiler.py --profile --profile-dir $env:TEMP\conv-profiles
+python tools/profiler/relay_loading_profiler.py --profile --profile-dir $env:TEMP\relay-profiles
 ```
 
 Versioned budgets live in `runtime_budgets.m1.json` and

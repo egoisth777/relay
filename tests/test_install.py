@@ -262,6 +262,7 @@ def test_default_install_uses_home_plugin_installation_root(tmp_path):
     proc = install_default(home)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert f"plugin_installation_root = {root.resolve()}" in proc.stdout.splitlines()
+    assert f"relay_archive = {(root / 'convs').resolve()}" in proc.stdout.splitlines()
     assert f"conversation_database = {(root / 'convs').resolve()}" in proc.stdout.splitlines()
     assert_installed(root)
     assert not (tmp_path / ".relay").exists()
@@ -346,6 +347,7 @@ def test_status_reports_present_on_installed(tmp_path):
     assert f"plugin_installation_root = {tmp_path}" in proc.stdout.splitlines()
     assert f"canonical_plugin_root = {tmp_path / 'relay'}" in proc.stdout.splitlines()
     assert f"canonical_hook_root = {tmp_path / 'hooks'}" in proc.stdout.splitlines()
+    assert f"relay_archive = {tmp_path / 'convs'}" in proc.stdout.splitlines()
     assert f"conversation_database = {tmp_path / 'convs'}" in proc.stdout.splitlines()
     assert "plugin files: present" in proc.stdout
     assert "Relay archive: present" in proc.stdout
@@ -605,6 +607,7 @@ def test_help_and_status_use_plugin_root_and_database_terms(tmp_path):
     assert f"plugin_installation_root = {tmp_path}" in status.stdout.splitlines()
     assert f"canonical_plugin_root = {tmp_path / 'relay'}" in status.stdout.splitlines()
     assert f"canonical_hook_root = {tmp_path / 'hooks'}" in status.stdout.splitlines()
+    assert f"relay_archive = {tmp_path / 'convs'}" in status.stdout.splitlines()
     assert f"conversation_database = {tmp_path / 'convs'}" in status.stdout.splitlines()
     assert "Relay archive:" in status.stdout
     assert "store root" not in status.stdout.lower()
