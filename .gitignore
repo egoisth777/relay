@@ -10,10 +10,88 @@ __pycache__/
 tools/profiler/results/
 tools/profiler/*.prof
 tools/profiler/**/*.prof
+# Arca working and product knowledge. Only canonical documents are visible.
 /.arca/*
-!/.arca/index/
-/.arca/index/*
-!/.arca/index/ubiquitous-language.md
+!/.arca/index.md
+!/.arca/ubi-lang.md
+
+# Delivered product: exactly seven files.
+!/.arca/current/
+/.arca/current/*
+!/.arca/current/index.md
+!/.arca/current/ubi-lang.md
+!/.arca/current/spec.md
+!/.arca/current/design.md
+!/.arca/current/test-list.md
+!/.arca/current/current.md
+!/.arca/current/log.md
+
+# Active target: optional, exactly five files.
+!/.arca/goal/
+/.arca/goal/*
+!/.arca/goal/index.md
+!/.arca/goal/ubi-lang.md
+!/.arca/goal/spec.md
+!/.arca/goal/design.md
+!/.arca/goal/test-list.md
+
+# Residual records use r-relay-<nn>-<condensed-name>.md names.
+!/.arca/residual/
+/.arca/residual/*
+!/.arca/residual/r-relay-[0-9][0-9]-*.md
+
+# Tickets use t-<nn>-<condensed-name>.md names; archived tickets retain that shape.
+!/.arca/ticket/
+/.arca/ticket/*
+!/.arca/ticket/t-[0-9][0-9]-*.md
+!/.arca/ticket/archive/
+/.arca/ticket/archive/*
+!/.arca/ticket/archive/t-[0-9][0-9]-*.md
+
+# Issues use i-<nnn>-<condensed-name> folders and exactly five direct files.
+!/.arca/issue/
+/.arca/issue/*
+!/.arca/issue/i-[0-9][0-9][0-9]-*/
+/.arca/issue/i-[0-9][0-9][0-9]-/*
+!/.arca/issue/i-[0-9][0-9][0-9]-*/index.md
+!/.arca/issue/i-[0-9][0-9][0-9]-*/ubi-lang.md
+!/.arca/issue/i-[0-9][0-9][0-9]-*/spec.md
+!/.arca/issue/i-[0-9][0-9][0-9]-*/design.md
+!/.arca/issue/i-[0-9][0-9][0-9]-*/test-plan.md
+!/.arca/issue/archive/
+/.arca/issue/archive/*
+!/.arca/issue/archive/i-[0-9][0-9][0-9]-*/
+/.arca/issue/archive/i-[0-9][0-9][0-9]-/*
+!/.arca/issue/archive/i-[0-9][0-9][0-9]-*/index.md
+!/.arca/issue/archive/i-[0-9][0-9][0-9]-*/ubi-lang.md
+!/.arca/issue/archive/i-[0-9][0-9][0-9]-*/spec.md
+!/.arca/issue/archive/i-[0-9][0-9][0-9]-*/design.md
+!/.arca/issue/archive/i-[0-9][0-9][0-9]-*/test-plan.md
+
+# Reusable forms: exactly these files.
+!/.arca/tpl/
+/.arca/tpl/*
+!/.arca/tpl/current.md
+!/.arca/tpl/log.md
+!/.arca/tpl/residual.md
+!/.arca/tpl/ticket.md
+!/.arca/tpl/issue/
+/.arca/tpl/issue/*
+!/.arca/tpl/issue/index.md
+!/.arca/tpl/issue/ubi-lang.md
+!/.arca/tpl/issue/spec.md
+!/.arca/tpl/issue/design.md
+!/.arca/tpl/issue/test-plan.md
+
+# Research studies: one flat Markdown folder per title.
+!/.arca/research/
+/.arca/research/*
+!/.arca/research/*/
+/.arca/research/*/*
+!/.arca/research/*/*.md
+
+
+# Product facts: exactly these files.
 !/.arca/space/
 /.arca/space/*
 !/.arca/space/relay-sp/
@@ -23,6 +101,17 @@ tools/profiler/**/*.prof
 !/.arca/space/relay-sp/what/architecture.md
 !/.arca/space/relay-sp/what/manifest.md
 !/.arca/space/relay-sp/what/flows.md
+
+# Canonical wiki guidance: exactly these files.
+!/.arca/space/wiki/
+/.arca/space/wiki/*
+!/.arca/space/wiki/relay-development.md
+!/.arca/space/wiki/relay-hooks.md
+# Local external links and private material stay ignored.
+/.arca/scheduler
+/.arca/store
+/.arca/private/
+/.arca-private/
 
 # locally-installed agent skill marketplace (not Relay source)
 .agents/
