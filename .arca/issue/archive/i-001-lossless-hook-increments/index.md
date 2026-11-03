@@ -18,7 +18,7 @@ The issue requires lossless counting and reminder semantics for every valid conc
 
 | Need | File |
 | :--- | :--- |
-| Issue terms | [Ubiquitous language](ubi-lang.md) |
+| Issue terms | [Ubiquitous language](packs/projs/skills/relay/.arca/issue/archive/i-001-lossless-hook-increments/ubi-lang.md) |
 | Requirements and decisions | [Specification](spec.md) |
 | Proposed mechanics | [Design](design.md) |
 | Verification and integration traces | [Test plan](test-plan.md) |

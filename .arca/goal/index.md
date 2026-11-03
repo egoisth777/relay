@@ -6,7 +6,7 @@ This is the active Relay target bundle for goal revision `g-001`. It starts as a
 
 | Need | File |
 | :--- | :--- |
-| Product vocabulary | [Ubiquitous language](ubi-lang.md) |
+| Product vocabulary | [Ubiquitous language](packs/projs/skills/relay/.arca/goal/ubi-lang.md) |
 | Required behavior | [Specification](spec.md) |
 | Conforming mechanics | [Design](design.md) |
 | Verification | [Test list](test-list.md) |

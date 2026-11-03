@@ -1,0 +1,4 @@
+
+# Local build storage selected by the 2026-10-16 Hive migration.
+[build]
+target-dir = "E:/cache/hive/cargo/skill-dev/relay"

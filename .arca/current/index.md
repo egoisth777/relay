@@ -6,7 +6,7 @@ This is the delivered Relay product authority after Arca bootstrap. It describes
 
 | Need | File |
 | :--- | :--- |
-| Product vocabulary | [Ubiquitous language](ubi-lang.md) |
+| Product vocabulary | [Ubiquitous language](packs/projs/skills/relay/.arca/current/ubi-lang.md) |
 | Required behavior | [Specification](spec.md) |
 | Conforming mechanics | [Design](design.md) |
 | Verification | [Test list](test-list.md) |

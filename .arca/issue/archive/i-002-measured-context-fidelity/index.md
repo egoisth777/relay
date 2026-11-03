@@ -18,7 +18,7 @@ The source synthesis remains in [Designer next steps](../../../research/high-fid
 
 | Need | File |
 | :--- | :--- |
-| Issue terms | [Ubiquitous language](ubi-lang.md) |
+| Issue terms | [Ubiquitous language](packs/projs/skills/relay/.arca/issue/archive/i-002-measured-context-fidelity/ubi-lang.md) |
 | Requirements and decisions | [Specification](spec.md) |
 | Proposed mechanics | [Design](design.md) |
 | Verification and integration traces | [Test plan](test-plan.md) |

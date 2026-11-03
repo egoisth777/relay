@@ -14,7 +14,7 @@ status: {{pending|integrated|rejected}}
 
 | Need | File |
 | :--- | :--- |
-| Issue terms | [Ubiquitous language](ubi-lang.md) |
+| Issue terms | [Ubiquitous language](packs/projs/skills/relay/.arca/tpl/issue/ubi-lang.md) |
 | Requirements and decisions | [Specification](spec.md) |
 | Proposed mechanics | [Design](design.md) |
 | Verification and integration traces | [Test plan](test-plan.md) |
